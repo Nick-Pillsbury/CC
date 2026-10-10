@@ -6,58 +6,48 @@ import threading
 import time
 from collections import deque
 from datetime import datetime
+
 from fastapi import FastAPI
 
 app = FastAPI()
 
 # ---------------------------------------------------------------------------
-# Config (override with environment variables, e.g. in docker-compose)
+# Config (override via environment variables, e.g. in docker-compose)
 # ---------------------------------------------------------------------------
 CAMERA_DEVICE = os.getenv("CAMERA_DEVICE", "/dev/video0")
-# mjpeg / yuyv422 -> software x264 encode on the Pi.
-# h264 -> camera already outputs H.264, so FFmpeg just copies it (lowest latency + CPU).
-CAMERA_INPUT_FORMAT = os.getenv("CAMERA_INPUT_FORMAT", "mjpeg")
-VIDEO_SIZE = os.getenv("VIDEO_SIZE", "1280x720")
+VIDEO_SIZE = os.getenv("VIDEO_SIZE", "1920x1080")
 FRAMERATE = os.getenv("FRAMERATE", "30")
-BITRATE = os.getenv("BITRATE", "2M")      # cap so weak cellular signal doesn't stall the stream
-BUFSIZE = os.getenv("BUFSIZE", "1M")
+BITRATE = os.getenv("BITRATE", "3M")     # lower (e.g. 1.5M) for weak cellular
+BUFSIZE = os.getenv("BUFSIZE", "1500k")  # ~0.5s of video keeps latency low
 RTSP_PORT = int(os.getenv("RTSP_PORT", "8554"))
-RTSP_URL = f"rtsp://127.0.0.1:{RTSP_PORT}/stream"  # local ingest; MediaMTX serves WebRTC to the Frontend
-RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "/recordings")  # /recordings in docker is linked to /mnt/usb on host
+RTSP_URL = f"rtsp://127.0.0.1:{RTSP_PORT}/stream"
+RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "/recordings")
 
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
 lock = threading.Lock()
-ffmpeg_process = None
-recording_process = None
-recording_file = None
 last_error = None
-stream_logs = deque(maxlen=20)
-recording_logs = deque(maxlen=20)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-def _set_error(message, logs=None):
+def set_error(message, details=None):
     global last_error
     last_error = {
         "time": datetime.now().isoformat(timespec="seconds"),
         "message": message,
-        "details": list(logs)[-5:] if logs else [],
+        "details": list(details)[-5:] if details else [],
     }
 
 
-def _port_open(host, port):
+def port_open(port):
     try:
-        with socket.create_connection((host, port), timeout=1):
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
             return True
     except OSError:
         return False
 
 
-def _storage_ok():
+def storage_ok():
     try:
         os.makedirs(RECORDINGS_DIR, exist_ok=True)
         return os.access(RECORDINGS_DIR, os.W_OK)
@@ -65,250 +55,185 @@ def _storage_ok():
         return False
 
 
-def _spawn(cmd, log_buffer):
-    """Start ffmpeg and keep its recent stderr lines for error reporting."""
-    log_buffer.clear()
-    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+class Job:
+    """One ffmpeg process plus its recent stderr output."""
 
-    def reader():
+    def __init__(self, name):
+        self.name = name
+        self.proc = None
+        self.file = None
+        self.logs = deque(maxlen=20)
+
+    def running(self):
+        """True if running. Records an error if it died on its own."""
+        if self.proc is None:
+            return False
+        if self.proc.poll() is None:
+            return True
+        set_error(f"{self.name} exited unexpectedly (code {self.proc.returncode})", self.logs)
+        self.proc = self.file = None
+        return False
+
+    def start(self, cmd, file=None):
+        self.logs.clear()
+        self.file = file
+        self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        threading.Thread(target=self._read_logs, args=(self.proc,), daemon=True).start()
+
+    def _read_logs(self, proc):
         for line in proc.stderr:
-            log_buffer.append(line.decode(errors="replace").rstrip())
+            self.logs.append(line.decode(errors="replace").rstrip())
 
-    threading.Thread(target=reader, daemon=True).start()
-    return proc
-
-
-def _refresh():
-    """Detect processes that died on their own (crash, camera unplugged, etc.). Call with lock held."""
-    global ffmpeg_process, recording_process, recording_file
-
-    if ffmpeg_process is not None and ffmpeg_process.poll() is not None:
-        _set_error(f"stream process exited unexpectedly (code {ffmpeg_process.returncode})", stream_logs)
-        ffmpeg_process = None
-
-    if recording_process is not None and recording_process.poll() is not None:
-        _set_error(f"recording process exited unexpectedly (code {recording_process.returncode})", recording_logs)
-        recording_process = None
-        recording_file = None
+    def stop(self, sig=signal.SIGTERM, timeout=5):
+        try:
+            self.proc.send_signal(sig)
+            self.proc.wait(timeout=timeout)
+        except Exception:
+            self.proc.kill()
+        finally:
+            self.proc = self.file = None
 
 
-def _stream_cmd():
-    cmd = [
-        "ffmpeg",
-        "-loglevel", "warning",
-        "-fflags", "nobuffer",
-        "-flags", "low_delay",
-        "-f", "v4l2",
-        "-input_format", CAMERA_INPUT_FORMAT,
-        "-video_size", VIDEO_SIZE,
-        "-framerate", FRAMERATE,
-        "-i", CAMERA_DEVICE,
-        "-an",
-    ]
-
-
-    cmd += [
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-pix_fmt", "yuv420p",
-        "-profile:v", "baseline",   # browser WebRTC compatible
-        "-g", FRAMERATE,            # keyframe about every second
-        "-b:v", BITRATE,
-        "-maxrate", BITRATE,
-        "-bufsize", BUFSIZE,
-    ]
-
-    cmd += ["-f", "rtsp", "-rtsp_transport", "tcp", RTSP_URL]
-    return cmd
+stream = Job("stream")
+recording = Job("recording")
 
 
 # ---------------------------------------------------------------------------
-# Stream Start
-# Start an ffmpeg process to:
-#   - capture video from the camera
-#   - encode it with H.264 (or copy it if the camera already outputs H.264)
-#   - publish it over RTSP to MediaMTX on localhost:8554 (MediaMTX serves it as WebRTC)
+# ffmpeg commands
+# ---------------------------------------------------------------------------
+def stream_cmd():
+    return [
+        "ffmpeg", "-loglevel", "warning",
+        # input: camera MJPEG
+        "-fflags", "nobuffer", "-flags", "low_delay",
+        "-use_wallclock_as_timestamps", "1",
+        "-f", "v4l2", "-input_format", "mjpeg",
+        "-video_size", VIDEO_SIZE, "-framerate", FRAMERATE,
+        "-i", CAMERA_DEVICE,
+        "-an",
+        # output: low-latency H.264, WebRTC-compatible
+        "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
+        "-profile:v", "baseline", "-pix_fmt", "yuv420p",
+        "-g", FRAMERATE, "-bf", "0",
+        "-x264-params", "repeat-headers=1",
+        "-b:v", BITRATE, "-maxrate", BITRATE, "-bufsize", BUFSIZE,
+        "-f", "rtsp", "-rtsp_transport", "tcp", RTSP_URL,
+    ]
+
+
+def recording_cmd(filename):
+    # Fragmented MP4 stays playable if power is lost mid-recording.
+    return [
+        "ffmpeg", "-loglevel", "warning",
+        "-rtsp_transport", "tcp", "-i", RTSP_URL,
+        "-c:v", "copy", "-an",
+        "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+        filename,
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Stream
 # ---------------------------------------------------------------------------
 @app.post("/stream/start")
 def start_stream():
-    global ffmpeg_process
-
     with lock:
-        _refresh()
-
-        if ffmpeg_process is not None:
+        if stream.running():
             return {"status": "stream already running"}
-
         if not os.path.exists(CAMERA_DEVICE):
             msg = f"camera not found at {CAMERA_DEVICE}"
-            _set_error(msg)
+            set_error(msg)
             return {"status": "error", "message": msg}
-
-        if not _port_open("127.0.0.1", RTSP_PORT):
+        if not port_open(RTSP_PORT):
             msg = f"MediaMTX not reachable on port {RTSP_PORT}"
-            _set_error(msg)
+            set_error(msg)
             return {"status": "error", "message": msg}
 
         try:
-            ffmpeg_process = _spawn(_stream_cmd(), stream_logs)
+            stream.start(stream_cmd())
         except Exception as e:
-            ffmpeg_process = None
-            _set_error(f"failed to start stream: {e}")
+            set_error(f"failed to start stream: {e}")
             return {"status": "error", "message": str(e)}
 
-        # Catch immediate failures (camera busy, unsupported format, etc.)
-        time.sleep(1)
-        if ffmpeg_process.poll() is not None:
-            _refresh()
-            return {"status": "error", "message": "stream failed to start", "details": last_error["details"]}
-
+        time.sleep(1)  # catch immediate failures (camera busy, bad format)
+        if not stream.running():
+            return {"status": "error", "message": "stream failed to start",
+                    "details": last_error["details"]}
         return {"status": "stream started"}
 
 
-# ---------------------------------------------------------------------------
-# Stream Stop
-# End the ffmpeg process that is streaming to the RTSP server.
-# If recording is active, do not stop the stream until recording is stopped first.
-#   Ending the stream while recording will error out the recording process.
-# ---------------------------------------------------------------------------
 @app.post("/stream/stop")
 def stop_stream():
-    global ffmpeg_process
-
     with lock:
-        _refresh()
-
-        if ffmpeg_process is None:
+        if not stream.running():
             return {"status": "stream not running"}
-        if recording_process is not None:
+        if recording.running():
             return {"status": "stop recording before stopping stream"}
-
-        try:
-            ffmpeg_process.terminate()
-            ffmpeg_process.wait(timeout=5)
-        except Exception:
-            ffmpeg_process.kill()
-        finally:
-            ffmpeg_process = None
-
+        stream.stop()
         return {"status": "stream stopped"}
 
 
 # ---------------------------------------------------------------------------
-# Recording Start
-# Start an ffmpeg process to:
-#   - read the RTSP stream on localhost:8554 (no re-encode)
-#   - save it to a uniquely named file in /recordings
-# Fragmented MP4 is used so the file stays playable if the Pi loses power mid-recording.
+# Recording
 # ---------------------------------------------------------------------------
 @app.post("/recording/start")
 def start_recording():
-    global recording_process, recording_file
-
     with lock:
-        _refresh()
-
-        if recording_process is not None:
+        if recording.running():
             return {"status": "recording already running"}
-
-        if ffmpeg_process is None:
+        if not stream.running():
             return {"status": "stream not running"}
-
-        if not _storage_ok():
+        if not storage_ok():
             msg = f"recording storage not writable at {RECORDINGS_DIR}"
-            _set_error(msg)
+            set_error(msg)
             return {"status": "error", "message": msg}
 
         filename = os.path.join(
-            RECORDINGS_DIR,
-            f"recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4",
+            RECORDINGS_DIR, f"recording_{datetime.now():%Y%m%d_%H%M%S}.mp4"
         )
-
-        cmd = [
-            "ffmpeg",
-            "-loglevel", "warning",
-            "-rtsp_transport", "tcp",
-            "-i", RTSP_URL,
-            "-c:v", "copy",
-            "-movflags", "frag_keyframe+empty_moov",
-            filename,
-        ]
-
         try:
-            recording_process = _spawn(cmd, recording_logs)
-            recording_file = filename
+            recording.start(recording_cmd(filename), file=filename)
         except Exception as e:
-            recording_process = None
-            recording_file = None
-            _set_error(f"failed to start recording: {e}")
+            set_error(f"failed to start recording: {e}")
             return {"status": "error", "message": str(e)}
-
         return {"status": "recording started", "file": filename}
 
 
-# ---------------------------------------------------------------------------
-# Recording Stop
-# End the ffmpeg process that is recording the RTSP stream.
-# SIGINT lets ffmpeg finish and close the file cleanly.
-# ---------------------------------------------------------------------------
 @app.post("/recording/stop")
 def stop_recording():
-    global recording_process, recording_file
-
     with lock:
-        _refresh()
-
-        if recording_process is None:
+        if not recording.running():
             return {"status": "recording not running"}
-
-        saved = recording_file
-        try:
-            recording_process.send_signal(signal.SIGINT)
-            recording_process.wait(timeout=10)
-        except Exception:
-            recording_process.kill()
-        finally:
-            recording_process = None
-            recording_file = None
-
+        saved = recording.file
+        recording.stop(sig=signal.SIGINT, timeout=10)  # SIGINT = clean file close
         return {"status": "recording stopped", "file": saved}
 
 
 # ---------------------------------------------------------------------------
-# Status
-# Return the state of the stream and recording processes.
+# Status / Health
 # ---------------------------------------------------------------------------
 @app.get("/status")
 def status():
     with lock:
-        _refresh()
         return {
-            "stream": "running" if ffmpeg_process else "stopped",
-            "recording": "running" if recording_process else "stopped",
-            "recording_file": recording_file,
+            "stream": "running" if stream.running() else "stopped",
+            "recording": "running" if recording.running() else "stopped",
+            "recording_file": recording.file,
         }
 
 
-# ---------------------------------------------------------------------------
-# Health
-# Container health for the Master API: dependencies, process state, and last error.
-# ---------------------------------------------------------------------------
 @app.get("/health")
 def health():
     with lock:
-        _refresh()
-
-        camera_ok = os.path.exists(CAMERA_DEVICE)
-        mediamtx_ok = _port_open("127.0.0.1", RTSP_PORT)
-        storage_ok = _storage_ok()
-
+        camera = os.path.exists(CAMERA_DEVICE)
+        mediamtx = port_open(RTSP_PORT)
+        storage = storage_ok()
         return {
-            "ok": camera_ok and mediamtx_ok and storage_ok,
-            "camera_detected": camera_ok,
-            "mediamtx_reachable": mediamtx_ok,
-            "storage_writable": storage_ok,
-            "stream": "running" if ffmpeg_process else "stopped",
-            "recording": "running" if recording_process else "stopped",
+            "ok": camera and mediamtx and storage,
+            "camera_detected": camera,
+            "mediamtx_reachable": mediamtx,
+            "storage_writable": storage,
+            "stream": "running" if stream.running() else "stopped",
+            "recording": "running" if recording.running() else "stopped",
             "last_error": last_error,
         }

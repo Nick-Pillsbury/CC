@@ -1,0 +1,33 @@
+services:
+  mediamtx:
+    image: bluenviron/mediamtx:1
+    container_name: mediamtx
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+
+  camera-api:
+    build: .
+    container_name: camera-api
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - mediamtx
+    devices:
+      - /dev/video0:/dev/video0
+    volumes:
+      - /mnt/usb:/recordings
+    environment:
+      CAMERA_DEVICE: /dev/video0
+      VIDEO_SIZE: 1920x1080
+      FRAMERATE: "30"
+      BITRATE: 3M
+      BUFSIZE: 1500k
+      RTSP_PORT: "8554"
+      RECORDINGS_DIR: /recordings
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/status', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
