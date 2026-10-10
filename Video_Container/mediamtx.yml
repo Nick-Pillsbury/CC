@@ -1,0 +1,23 @@
+logLevel: info
+
+# RTSP is only used locally by ffmpeg, so bind it to localhost
+rtsp: yes
+rtspAddress: 127.0.0.1:8554
+
+# WebRTC for the browser frontend
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+# Add the IP(s) browsers will use to reach the Pi (LAN IP, Tailscale IP, public IP)
+webrtcAdditionalHosts:
+  - 10.0.0.51
+#  - 192.168.1.50
+
+# Not needed
+hls: no
+rtmp: no
+srt: no
+
+paths:
+  stream:
+    source: publisher
