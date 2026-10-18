@@ -11,4 +11,5 @@ router = APIRouter(prefix="/control", tags=["control"])
 @router.put("/motion", response_model=MotionResponse)
 async def set_motion(command: MotionCommand, services: Services) -> MotionResponse:
     """Validate and forward one normalized motion command."""
+    await services.state_machine.require_motion_allowed()
     return await services.hardware.apply_motion(command)

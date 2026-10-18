@@ -1,11 +1,12 @@
 """Application dependencies shared by route modules."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from fastapi import Depends, Request
 
 from master_api.clients.base import HardwareClient, VideoClient
+from master_api.state import SystemStateMachine
 
 
 @dataclass(slots=True)
@@ -14,6 +15,7 @@ class ServiceContainer:
 
     hardware: HardwareClient
     video: VideoClient
+    state_machine: SystemStateMachine = field(default_factory=SystemStateMachine)
 
 
 def get_services(request: Request) -> ServiceContainer:

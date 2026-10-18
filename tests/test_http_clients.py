@@ -15,7 +15,8 @@ from master_api.clients.errors import (
 from master_api.clients.http import HttpHardwareClient, HttpVideoClient
 from master_api.dependencies import ServiceContainer
 from master_api.main import create_app
-from master_api.models import MotionCommand
+from master_api.models import MotionCommand, SystemState
+from master_api.state import SystemStateMachine
 
 
 HEALTH = {"ready": True, "detail": "ready"}
@@ -181,6 +182,7 @@ class DownstreamErrorEndpointTests(unittest.TestCase):
             ServiceContainer(
                 hardware=TimedOutHardware(),  # type: ignore[arg-type]
                 video=object(),  # type: ignore[arg-type]
+                state_machine=SystemStateMachine(SystemState.CONTROLLED),
             )
         )
         with TestClient(app) as client:

@@ -36,9 +36,20 @@ class HealthEndpointTests(ApiTestCase):
             "/api/v1/control/motion",
             "/api/v1/health/live",
             "/api/v1/health/ready",
+            "/api/v1/system/state",
             "/api/v1/telemetry",
             "/api/v1/video/recordings",
             "/api/v1/video/recordings/current",
             "/api/v1/video/status",
         }
         self.assertEqual(expected, set(paths))
+
+    def test_system_state_reports_latest_health_transition(self) -> None:
+        self.video.ready = False
+        self.client.get("/api/v1/health/ready")
+
+        response = self.client.get("/api/v1/system/state")
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("DEGRADED", response.json()["system_state"])
+        self.assertEqual("Video service is unavailable", response.json()["reason"])

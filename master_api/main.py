@@ -8,12 +8,14 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from master_api.api import control, health, telemetry, video
+from master_api.api import control, health, system, telemetry, video
 from master_api.clients.errors import DownstreamError
 from master_api.clients.http import HttpHardwareClient, HttpVideoClient
 from master_api.clients.mock import MockHardwareClient, MockVideoClient
 from master_api.config import Settings
 from master_api.dependencies import ServiceContainer
+from master_api.models import SystemState
+from master_api.state import StateConflictError
 
 
 def create_app(
@@ -26,7 +28,13 @@ def create_app(
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         if services is not None:
             application.state.services = services
-            yield
+            try:
+                yield
+            finally:
+                await services.state_machine.transition(
+                    target=SystemState.SHUTTING_DOWN,
+                    reason="Application shutdown started",
+                )
             return
 
         runtime_settings = settings or Settings.from_env()
@@ -35,7 +43,13 @@ def create_app(
                 hardware=MockHardwareClient(),
                 video=MockVideoClient(),
             )
-            yield
+            try:
+                yield
+            finally:
+                await application.state.services.state_machine.transition(
+                    target=SystemState.SHUTTING_DOWN,
+                    reason="Application shutdown started",
+                )
             return
 
         async with httpx.AsyncClient(
@@ -51,7 +65,13 @@ def create_app(
                     runtime_settings.video_base_url,
                 ),
             )
-            yield
+            try:
+                yield
+            finally:
+                await application.state.services.state_machine.transition(
+                    target=SystemState.SHUTTING_DOWN,
+                    reason="Application shutdown started",
+                )
 
     app = FastAPI(
         title="CC Master API",
@@ -82,8 +102,27 @@ def create_app(
             },
         )
 
+    @app.exception_handler(StateConflictError)
+    async def handle_state_conflict(
+        request: Request,
+        exc: StateConflictError,
+    ) -> JSONResponse:
+        del request
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "system_state": exc.current_state.value,
+                    "retryable": exc.retryable,
+                }
+            },
+        )
+
     api_prefix = "/api/v1"
     app.include_router(health.router, prefix=api_prefix)
+    app.include_router(system.router, prefix=api_prefix)
     app.include_router(control.router, prefix=api_prefix)
     app.include_router(video.router, prefix=api_prefix)
     app.include_router(telemetry.router, prefix=api_prefix)

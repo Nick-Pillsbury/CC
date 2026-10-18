@@ -16,6 +16,13 @@ class SystemState(str, Enum):
     CONTROLLED = "CONTROLLED"
     DEGRADED = "DEGRADED"
     EMERGENCY_STOP = "EMERGENCY_STOP"
+    SHUTTING_DOWN = "SHUTTING_DOWN"
+
+
+class SystemStatus(BaseModel):
+    system_state: SystemState
+    reason: str
+    changed_at: datetime
 
 
 class ComponentHealth(BaseModel):

@@ -9,6 +9,12 @@ frontend can run without the hardware and video containers. Set
 `MASTER_API_CLIENT_MODE=http` to forward the same routes to the downstream HTTP
 services; route code does not change between modes.
 
+The process owns an explicit system state (`STARTING`, `READY`, `CONTROLLED`,
+`DEGRADED`, `EMERGENCY_STOP`, or `SHUTTING_DOWN`). Dependency health updates
+that state, `GET /api/v1/system/state` exposes the latest transition, and motion
+commands are rejected unless the state is `CONTROLLED`. Control-lease endpoints
+will own the `READY` to `CONTROLLED` transition in the next implementation phase.
+
 Install and run it with:
 
 ```powershell

@@ -1,9 +1,12 @@
 """Tests for mock-backed car-control endpoints."""
 
 from tests.base import ApiTestCase
+from master_api.models import SystemState
 
 
 class ControlEndpointTests(ApiTestCase):
+    initial_system_state = SystemState.CONTROLLED
+
     def test_motion_command_is_forwarded_to_mock_hardware(self) -> None:
         response = self.client.put(
             "/api/v1/control/motion",
@@ -67,3 +70,22 @@ class ControlEndpointTests(ApiTestCase):
         self.assertEqual(0.25, telemetry["steering"])
         self.assertEqual(-0.4, telemetry["throttle"])
         self.assertEqual(9, telemetry["last_sequence"])
+
+    def test_motion_is_rejected_outside_controlled_state(self) -> None:
+        self.services.state_machine = self.services.state_machine.__class__(
+            SystemState.READY
+        )
+
+        response = self.client.put(
+            "/api/v1/control/motion",
+            json={
+                "steering": 0.0,
+                "throttle": 0.0,
+                "sequence": 10,
+                "client_sent_at": "2026-10-02T18:25:43.511Z",
+            },
+        )
+
+        self.assertEqual(409, response.status_code)
+        self.assertEqual("system_state_conflict", response.json()["error"]["code"])
+        self.assertIsNone(self.hardware.last_sequence)
