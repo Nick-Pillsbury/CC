@@ -77,3 +77,25 @@ class SystemStateMachineTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(StateConflictError):
             await machine.transition(SystemState.READY, "Restart")
+
+    async def test_subscriber_receives_initial_state_and_transitions(self) -> None:
+        machine = SystemStateMachine(SystemState.READY)
+
+        async with machine.subscribe() as updates:
+            initial = await updates.get()
+            await machine.transition(SystemState.CONTROLLED, "Driver acquired control")
+            changed = await updates.get()
+
+        self.assertEqual(SystemState.READY, initial.system_state)
+        self.assertEqual(SystemState.CONTROLLED, changed.system_state)
+
+    async def test_slow_subscriber_receives_only_latest_state(self) -> None:
+        machine = SystemStateMachine(SystemState.READY)
+
+        async with machine.subscribe() as updates:
+            await machine.transition(SystemState.CONTROLLED, "Driver acquired control")
+            await machine.transition(SystemState.READY, "Driver released control")
+            latest = await updates.get()
+
+        self.assertEqual(SystemState.READY, latest.system_state)
+        self.assertEqual("Driver released control", latest.reason)

@@ -14,6 +14,9 @@ The process owns an explicit system state (`STARTING`, `READY`, `CONTROLLED`,
 that state, `GET /api/v1/system/state` exposes the latest transition, and motion
 commands are rejected unless the state is `CONTROLLED`. Control-lease endpoints
 will own the `READY` to `CONTROLLED` transition in the next implementation phase.
+Clients can subscribe to `WS /api/v1/system/state/ws` to receive the current
+state immediately and every later transition. Each subscriber uses a bounded
+latest-value queue, so a slow frontend cannot block command or health handling.
 
 Install and run it with:
 

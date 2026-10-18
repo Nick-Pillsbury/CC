@@ -1,6 +1,8 @@
 """Concurrency-safe state transitions for Master API orchestration."""
 
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from master_api.models import SystemState, SystemStatus, utc_now
 
@@ -57,6 +59,7 @@ class SystemStateMachine:
         self._reason = "Master API process created"
         self._changed_at = utc_now()
         self._lock = asyncio.Lock()
+        self._subscribers: set[asyncio.Queue[SystemStatus]] = set()
 
     def snapshot(self) -> SystemStatus:
         """Return an immutable view of the latest committed state."""
@@ -118,6 +121,19 @@ class SystemStateMachine:
                     "Motion commands require the CONTROLLED system state.",
                 )
 
+    @asynccontextmanager
+    async def subscribe(self) -> AsyncIterator[asyncio.Queue[SystemStatus]]:
+        """Yield a latest-value queue for one state-change consumer."""
+        updates: asyncio.Queue[SystemStatus] = asyncio.Queue(maxsize=1)
+        async with self._lock:
+            self._subscribers.add(updates)
+            updates.put_nowait(self.snapshot())
+        try:
+            yield updates
+        finally:
+            async with self._lock:
+                self._subscribers.discard(updates)
+
     def _transition_locked(
         self,
         target: SystemState,
@@ -134,4 +150,9 @@ class SystemStateMachine:
         self._state = target
         self._reason = reason
         self._changed_at = utc_now()
-        return self.snapshot()
+        state = self.snapshot()
+        for updates in self._subscribers:
+            if updates.full():
+                updates.get_nowait()
+            updates.put_nowait(state)
+        return state

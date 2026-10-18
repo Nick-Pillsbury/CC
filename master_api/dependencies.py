@@ -3,7 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends
+from starlette.requests import HTTPConnection
 
 from master_api.clients.base import HardwareClient, VideoClient
 from master_api.state import SystemStateMachine
@@ -18,8 +19,8 @@ class ServiceContainer:
     state_machine: SystemStateMachine = field(default_factory=SystemStateMachine)
 
 
-def get_services(request: Request) -> ServiceContainer:
-    return request.app.state.services
+def get_services(connection: HTTPConnection) -> ServiceContainer:
+    return connection.app.state.services
 
 
 Services = Annotated[ServiceContainer, Depends(get_services)]

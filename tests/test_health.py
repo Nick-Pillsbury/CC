@@ -53,3 +53,14 @@ class HealthEndpointTests(ApiTestCase):
         self.assertEqual(200, response.status_code)
         self.assertEqual("DEGRADED", response.json()["system_state"])
         self.assertEqual("Video service is unavailable", response.json()["reason"])
+
+    def test_state_websocket_pushes_health_transitions(self) -> None:
+        with self.client.websocket_connect("/api/v1/system/state/ws") as websocket:
+            initial = websocket.receive_json()
+            self.video.ready = False
+            self.client.get("/api/v1/health/ready")
+            changed = websocket.receive_json()
+
+        self.assertEqual("READY", initial["system_state"])
+        self.assertEqual("DEGRADED", changed["system_state"])
+        self.assertEqual("Video service is unavailable", changed["reason"])
