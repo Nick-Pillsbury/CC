@@ -1,19 +1,15 @@
-logLevel: info
+logLevel: warn
 
-# RTSP is only used locally by ffmpeg, so bind it to localhost
 rtsp: yes
-rtspAddress: 127.0.0.1:8554
+rtspAddress: 127.0.0.1:8554   # only ffmpeg on the car uses this
+rtspTransports: [tcp]
 
-# WebRTC for the browser frontend
 webrtc: yes
-webrtcAddress: :8889
-webrtcLocalUDPAddress: :8189
-# Add the IP(s) browsers will use to reach the Pi (LAN IP, Tailscale IP, public IP)
-webrtcAdditionalHosts:
-  - 10.0.0.51
-#  - 192.168.1.50
+webrtcAddress: 10.0.0.51:8889
+webrtcLocalUDPAddress: 10.0.0.51:8189
+webrtcIPsFromInterfaces: no            # don't advertise cellular/LAN IPs
+webrtcAdditionalHosts: [10.0.0.51]      # the only address clients should try
 
-# Not needed
 hls: no
 rtmp: no
 srt: no
