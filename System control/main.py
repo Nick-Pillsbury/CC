@@ -3,27 +3,31 @@ import movement
 
 app = FastAPI()
 
-@app.post("/neutral")
-def neutral():
-  movement.neutral()
-  return {"status": "neutral"}
+@app.get("/status")
+def status():
+  return movement.get_system_status()
 
 @app.post("/forward")
-def forward(delta_us: float = 100.0):
-  movement.forward(delta_us)
-  return {"status": "forward", "delta_us": delta_us}
+def forward(delta: float = 100.0):
+  return movement.forward(delta)
 
 @app.post("/backward")
-def backward(delta_us: float = 100.0):
-  movement.backward(delta_us)
-  return {"status": "backward", "delta_us": delta_us}
+def backward(delta: float = 100.0):
+  return movement.backward(delta)
 
 @app.post("/left")
-def left(delta_us: float = 150.0):
-  movement.left(delta_us)
-  return {"status": "left", "delta_us": delta_us}
+def left(deg: float = 25.0):
+  return movement.left(deg)
 
 @app.post("/right")
-def right(delta_us: float = 150.0):
-  movement.right(delta_us)
-  return {"status": "right", "delta_us": delta_us}
+def right(deg: float = 25.0):
+  return movement.right(deg)
+
+@app.post("/steer")
+def steer(deg: float = 0.0):
+  return movement.set_angle(deg)
+
+@app.post("/neutral")
+def neutral():
+  return movement.neutral()
+
