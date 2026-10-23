@@ -2,7 +2,7 @@
 
 Status: research draft, not yet an implementation contract
 
-This document makes the broad topics in [Master API Research Notes](../MASTER_API_RESEARCH.md) concrete enough for the frontend, hardware, video, and Master API developers to review together. Values labeled **hypothesis** are starting points for testing, not final safety requirements.
+This document makes the broad topics in [Master API Research Notes](./MASTER_API_RESEARCH.md) concrete enough for the frontend, hardware, video, and Master API developers to review together. Values labeled **hypothesis** are starting points for testing, not final safety requirements.
 
 ## 1. Scope and assumptions
 

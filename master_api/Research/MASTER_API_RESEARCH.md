@@ -2,7 +2,7 @@
 
 ## Purpose
 
-These notes turn the Master API requirements in [CC_Proposal.pdf](./CC_Proposal.pdf) into the topics and decisions that should be understood before implementation. This week can remain research-focused; the output should be a clear API contract, state model, and testing plan rather than a large amount of code.
+These notes turn the Master API requirements in [CC_Proposal.pdf](../CC_Proposal.pdf) into the topics and decisions that should be understood before implementation. This week can remain research-focused; the output should be a clear API contract, state model, and testing plan rather than a large amount of code.
 
 The proposal says the Master API must:
 
@@ -347,7 +347,7 @@ The most valuable result is agreement on behavior at failures and boundaries. On
 
 ## Source notes
 
-- Project requirements: [CC Proposal](./CC_Proposal.pdf)
+- Project requirements: [CC Proposal](../CC_Proposal.pdf)
 - [FastAPI dependencies](https://fastapi.tiangolo.com/tutorial/dependencies/)
 - [FastAPI WebSockets](https://fastapi.tiangolo.com/advanced/websockets/)
 - [FastAPI lifespan events](https://fastapi.tiangolo.com/advanced/events/)

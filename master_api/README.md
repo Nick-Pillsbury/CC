@@ -18,14 +18,34 @@ Clients can subscribe to `WS /api/v1/system/state/ws` to receive the current
 state immediately and every later transition. Each subscriber uses a bounded
 latest-value queue, so a slow frontend cannot block command or health handling.
 
-Install and run it with:
+From the `CC` repository folder, install and run it with:
 
 ```powershell
+Set-Location master_api
 python -m pip install -r requirements.txt
 python -m uvicorn master_api.main:app --reload
 ```
 
 Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
+
+### Project layout
+
+The two `master_api` names have different purposes: the outer folder is the
+project folder, while the inner folder is the importable Python package.
+
+```text
+CC/
+└── master_api/              # Project folder
+    ├── master_api/          # Python application package
+    │   ├── api/             # HTTP and WebSocket routes
+    │   ├── clients/         # Hardware and video integrations
+    │   ├── main.py          # FastAPI setup and startup/shutdown
+    │   ├── models.py        # Request and response data models
+    │   └── state.py         # Safety-related system state
+    ├── tests/               # Automated tests
+    ├── Research/            # Design notes and interface drafts
+    └── requirements.txt     # Python dependencies
+```
 
 ### Downstream HTTP configuration
 
@@ -62,3 +82,18 @@ Run the endpoint tests with:
 ```powershell
 python -m unittest discover -s tests -v
 ```
+
+## Development approach
+
+Keep the implementation readable to an average computer science student. Clear,
+ordinary code is more important than using the fewest lines. As safety permits:
+
+- add behavior only when there is a current requirement or test for it;
+- keep HTTP routes thin and put shared rules in focused modules;
+- prefer the standard library and existing dependencies;
+- prefer basic control flow over clever or advanced language features;
+- introduce an abstraction only when it removes real duplication or isolates an
+  external system;
+- keep safety checks explicit, even when a shorter implementation is possible;
+- test public behavior and failure cases instead of implementation details; and
+- update this README when setup or behavior changes.

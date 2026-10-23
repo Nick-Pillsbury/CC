@@ -26,6 +26,7 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        # Tests can provide their own clients instead of creating runtime clients.
         if services is not None:
             application.state.services = services
             try:
@@ -38,6 +39,8 @@ def create_app(
             return
 
         runtime_settings = settings or Settings.from_env()
+
+        # Mock mode lets students run the API without car hardware.
         if runtime_settings.client_mode == "mock":
             application.state.services = ServiceContainer(
                 hardware=MockHardwareClient(),
@@ -52,6 +55,7 @@ def create_app(
                 )
             return
 
+        # HTTP mode shares one client between the hardware and video services.
         async with httpx.AsyncClient(
             timeout=runtime_settings.http_timeout()
         ) as http_client:
