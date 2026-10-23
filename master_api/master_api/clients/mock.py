@@ -1,15 +1,13 @@
 """In-memory downstream clients for development before containers are ready."""
 
-from uuid import uuid4
-
 from master_api.models import (
     ComponentHealth,
     ControlValues,
     HardwareTelemetry,
     MotionCommand,
     MotionResponse,
-    RecordingState,
-    RecordingStatus,
+    StreamState,
+    VideoStatus,
     utc_now,
 )
 
@@ -49,32 +47,19 @@ class MockHardwareClient:
 class MockVideoClient:
     def __init__(self, *, ready: bool = True) -> None:
         self.ready = ready
-        self._status = RecordingStatus(state=RecordingState.IDLE)
+        self._status = VideoStatus(stream=StreamState.STOPPED)
 
     async def health(self) -> ComponentHealth:
         detail = "mock video ready" if self.ready else "mock video unavailable"
         return ComponentHealth(ready=self.ready, detail=detail)
 
-    async def start_recording(self, request_id: str) -> RecordingStatus:
-        if self._status.state == RecordingState.RECORDING:
-            return self._status
-
-        self._status = RecordingStatus(
-            state=RecordingState.RECORDING,
-            recording_id=str(uuid4()),
-            request_id=request_id,
-            started_at=utc_now(),
-        )
+    async def start_stream(self) -> VideoStatus:
+        self._status = VideoStatus(stream=StreamState.RUNNING)
         return self._status
 
-    async def stop_recording(self) -> RecordingStatus:
-        if self._status.state != RecordingState.RECORDING:
-            return self._status
-
-        self._status = self._status.model_copy(
-            update={"state": RecordingState.STOPPED, "stopped_at": utc_now()}
-        )
+    async def stop_stream(self) -> VideoStatus:
+        self._status = VideoStatus(stream=StreamState.STOPPED)
         return self._status
 
-    async def status(self) -> RecordingStatus:
+    async def status(self) -> VideoStatus:
         return self._status

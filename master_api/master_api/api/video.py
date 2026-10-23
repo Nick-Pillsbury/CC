@@ -1,30 +1,23 @@
-"""Video-control routes."""
+"""Video stream routes."""
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter
 
 from master_api.dependencies import Services
-from master_api.models import RecordingStart, RecordingStatus
+from master_api.models import VideoStatus
 
 router = APIRouter(prefix="/video", tags=["video"])
 
 
-@router.get("/status", response_model=RecordingStatus)
-async def video_status(services: Services) -> RecordingStatus:
+@router.get("/status", response_model=VideoStatus)
+async def video_status(services: Services) -> VideoStatus:
     return await services.video.status()
 
 
-@router.post(
-    "/recordings",
-    response_model=RecordingStatus,
-    status_code=status.HTTP_201_CREATED,
-)
-async def start_recording(
-    request: RecordingStart,
-    services: Services,
-) -> RecordingStatus:
-    return await services.video.start_recording(request.request_id)
+@router.post("/stream/start", response_model=VideoStatus)
+async def start_stream(services: Services) -> VideoStatus:
+    return await services.video.start_stream()
 
 
-@router.delete("/recordings/current", response_model=RecordingStatus)
-async def stop_recording(services: Services) -> RecordingStatus:
-    return await services.video.stop_recording()
+@router.post("/stream/stop", response_model=VideoStatus)
+async def stop_stream(services: Services) -> VideoStatus:
+    return await services.video.stop_stream()

@@ -12,5 +12,5 @@ class TelemetryEndpointTests(ApiTestCase):
         self.assertEqual(0.0, body["hardware"]["steering"])
         self.assertEqual(0.0, body["hardware"]["throttle"])
         self.assertIsNone(body["hardware"]["last_sequence"])
-        self.assertEqual("idle", body["video"]["state"])
+        self.assertEqual("stopped", body["video"]["stream"])
         self.assertIn("collected_at", body)

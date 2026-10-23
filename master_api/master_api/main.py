@@ -62,7 +62,7 @@ def create_app(
             application.state.services = ServiceContainer(
                 hardware=HttpHardwareClient(
                     http_client,
-                    runtime_settings.hardware_base_url,
+                    runtime_settings.controller_base_url,
                 ),
                 video=HttpVideoClient(
                     http_client,

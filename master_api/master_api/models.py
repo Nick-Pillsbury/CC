@@ -63,24 +63,13 @@ class MotionResponse(BaseModel):
     hardware_received_at: datetime
 
 
-class RecordingStart(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    request_id: str = Field(min_length=1, max_length=128)
-
-
-class RecordingState(str, Enum):
-    IDLE = "idle"
-    RECORDING = "recording"
+class StreamState(str, Enum):
+    RUNNING = "running"
     STOPPED = "stopped"
 
 
-class RecordingStatus(BaseModel):
-    state: RecordingState
-    recording_id: str | None = None
-    request_id: str | None = None
-    started_at: datetime | None = None
-    stopped_at: datetime | None = None
+class VideoStatus(BaseModel):
+    stream: StreamState
 
 
 class HardwareTelemetry(BaseModel):
@@ -92,5 +81,5 @@ class HardwareTelemetry(BaseModel):
 
 class TelemetrySnapshot(BaseModel):
     hardware: HardwareTelemetry
-    video: RecordingStatus
+    video: VideoStatus
     collected_at: datetime

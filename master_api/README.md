@@ -3,9 +3,9 @@ The goal of CC is to design and implement a cellular-enabled RC car, modified to
 
 ## Master API
 
-The Master API exposes endpoints for motion control, video recording, telemetry,
+The Master API exposes endpoints for motion control, video streaming, telemetry,
 liveness, and readiness. It uses in-memory mock clients by default so the API and
-frontend can run without the hardware and video containers. Set
+frontend can run without the Controller and Video APIs. Set
 `MASTER_API_CLIENT_MODE=http` to forward the same routes to the downstream HTTP
 services; route code does not change between modes.
 
@@ -35,27 +35,27 @@ project folder, while the inner folder is the importable Python package.
 
 ```text
 CC/
-└── master_api/              # Project folder
-    ├── master_api/          # Python application package
-    │   ├── api/             # HTTP and WebSocket routes
-    │   ├── clients/         # Hardware and video integrations
-    │   ├── main.py          # FastAPI setup and startup/shutdown
-    │   ├── models.py        # Request and response data models
-    │   └── state.py         # Safety-related system state
-    ├── tests/               # Automated tests
-    ├── Research/            # Design notes and interface drafts
-    └── requirements.txt     # Python dependencies
++-- master_api/              # Project folder
+    +-- master_api/          # Python application package
+    |   +-- api/             # HTTP and WebSocket routes
+    |   +-- clients/         # Controller and Video integrations
+    |   +-- main.py          # FastAPI setup and startup/shutdown
+    |   +-- models.py        # Request and response data models
+    |   +-- state.py         # Safety-related system state
+    +-- tests/               # Automated tests
+    +-- Research/            # Design notes and interface drafts
+    +-- requirements.txt     # Python dependencies
 ```
 
 ### Downstream HTTP configuration
 
-The hardware and video clients share one application-scoped asynchronous HTTP
+The Controller and Video clients share one application-scoped asynchronous HTTP
 connection pool. The pool is created during application startup and closed during
 shutdown. Configure HTTP mode before starting Uvicorn:
 
 ```powershell
 $env:MASTER_API_CLIENT_MODE = "http"
-$env:MASTER_API_HARDWARE_BASE_URL = "http://hardware:8000"
+$env:MASTER_API_CONTROLLER_BASE_URL = "http://controller:8000"
 $env:MASTER_API_VIDEO_BASE_URL = "http://video:8000"
 python -m uvicorn master_api.main:app --reload
 ```
@@ -65,12 +65,29 @@ All supported settings are environment variables:
 | Variable | Default |
 | --- | --- |
 | `MASTER_API_CLIENT_MODE` | `mock` |
-| `MASTER_API_HARDWARE_BASE_URL` | `http://hardware:8000` |
+| `MASTER_API_CONTROLLER_BASE_URL` | `http://controller:8000` |
 | `MASTER_API_VIDEO_BASE_URL` | `http://video:8000` |
 | `MASTER_API_HTTP_CONNECT_TIMEOUT_SECONDS` | `0.5` |
 | `MASTER_API_HTTP_READ_TIMEOUT_SECONDS` | `0.5` |
 | `MASTER_API_HTTP_WRITE_TIMEOUT_SECONDS` | `0.5` |
 | `MASTER_API_HTTP_POOL_TIMEOUT_SECONDS` | `0.5` |
+
+The Master API translates its small public contract to the APIs that already
+exist:
+
+| Master API behavior | Downstream request |
+| --- | --- |
+| Check Controller health or read telemetry | `GET /status` |
+| Apply steering | `POST /steer?deg=...` |
+| Apply positive or negative throttle | `POST /forward?delta=...` or `POST /backward?delta=...` |
+| Stop the motor | `POST /neutral` |
+| Read Video status | `GET /status` |
+| Start or stop video | `POST /stream/start` or `POST /stream/stop` |
+
+Public steering and throttle values remain normalized from `-1.0` to `1.0`.
+The adapter converts steering to `-45` through `45` degrees and throttle to the
+Controller's `0` through `350` microsecond delta. The repository intentionally
+ignores the top-level `Controller/` and `Video/` folders.
 
 Timeouts return `504 downstream_timeout`, connection failures return
 `503 downstream_unavailable`, and unsuccessful or invalid downstream responses

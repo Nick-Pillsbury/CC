@@ -10,7 +10,7 @@ class SettingsTests(unittest.TestCase):
         settings = Settings.from_env(
             {
                 "MASTER_API_CLIENT_MODE": "HTTP",
-                "MASTER_API_HARDWARE_BASE_URL": "http://hardware.test:8100/",
+                "MASTER_API_CONTROLLER_BASE_URL": "http://controller.test:8100/",
                 "MASTER_API_VIDEO_BASE_URL": "https://video.test/api/",
                 "MASTER_API_HTTP_CONNECT_TIMEOUT_SECONDS": "0.1",
                 "MASTER_API_HTTP_READ_TIMEOUT_SECONDS": "0.2",
@@ -20,7 +20,10 @@ class SettingsTests(unittest.TestCase):
         )
 
         self.assertEqual("http", settings.client_mode)
-        self.assertEqual("http://hardware.test:8100", settings.hardware_base_url)
+        self.assertEqual(
+            "http://controller.test:8100",
+            settings.controller_base_url,
+        )
         self.assertEqual("https://video.test/api", settings.video_base_url)
         timeout = settings.http_timeout()
         self.assertEqual(0.1, timeout.connect)
@@ -46,5 +49,5 @@ class SettingsTests(unittest.TestCase):
     def test_non_http_service_url_is_rejected(self) -> None:
         with self.assertRaisesRegex(ConfigurationError, "absolute HTTP"):
             Settings.from_env(
-                {"MASTER_API_HARDWARE_BASE_URL": "hardware.internal:8000"}
+                {"MASTER_API_CONTROLLER_BASE_URL": "controller.internal:8000"}
             )

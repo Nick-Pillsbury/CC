@@ -38,8 +38,8 @@ class HealthEndpointTests(ApiTestCase):
             "/api/v1/health/ready",
             "/api/v1/system/state",
             "/api/v1/telemetry",
-            "/api/v1/video/recordings",
-            "/api/v1/video/recordings/current",
+            "/api/v1/video/stream/start",
+            "/api/v1/video/stream/stop",
             "/api/v1/video/status",
         }
         self.assertEqual(expected, set(paths))

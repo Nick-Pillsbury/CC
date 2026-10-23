@@ -38,7 +38,7 @@ class Settings:
     """Settings needed to choose and configure downstream clients."""
 
     client_mode: str = "mock"
-    hardware_base_url: str = "http://hardware:8000"
+    controller_base_url: str = "http://controller:8000"
     video_base_url: str = "http://video:8000"
     connect_timeout_seconds: float = 0.5
     read_timeout_seconds: float = 0.5
@@ -56,10 +56,10 @@ class Settings:
 
         return cls(
             client_mode=mode,
-            hardware_base_url=_http_base_url(
+            controller_base_url=_http_base_url(
                 source,
-                "MASTER_API_HARDWARE_BASE_URL",
-                "http://hardware:8000",
+                "MASTER_API_CONTROLLER_BASE_URL",
+                "http://controller:8000",
             ),
             video_base_url=_http_base_url(
                 source,

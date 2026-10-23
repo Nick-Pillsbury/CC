@@ -30,7 +30,7 @@ class LifespanTests(unittest.TestCase):
 
         settings = Settings(
             client_mode="http",
-            hardware_base_url="http://hardware.test",
+            controller_base_url="http://controller.test",
             video_base_url="http://video.test",
         )
 

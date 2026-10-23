@@ -1,6 +1,5 @@
 """Contract and failure tests for asynchronous downstream HTTP clients."""
 
-import json
 import unittest
 
 import httpx
@@ -19,26 +18,14 @@ from master_api.models import MotionCommand, SystemState
 from master_api.state import SystemStateMachine
 
 
-HEALTH = {"ready": True, "detail": "ready"}
-MOTION = {
-    "accepted_sequence": 7,
-    "requested": {"steering": 0.25, "throttle": 0.5},
-    "applied": {"steering": 0.25, "throttle": 0.5},
-    "limited_by": [],
-    "hardware_received_at": "2026-10-09T12:00:00Z",
-}
-TELEMETRY = {
-    "steering": 0.25,
-    "throttle": 0.5,
-    "last_sequence": 7,
-    "sampled_at": "2026-10-09T12:00:00Z",
-}
-RECORDING = {
-    "state": "recording",
-    "recording_id": "recording-1",
-    "request_id": "request-1",
-    "started_at": "2026-10-09T12:00:00Z",
-    "stopped_at": None,
+CONTROLLER_STATUS = {
+    "hardware_online": True,
+    "frequency_hz": 50,
+    "state": {
+        "motor_us": 1725.0,
+        "steering_us": 1562.5,
+        "angle_deg": 11.25,
+    },
 }
 
 
@@ -49,17 +36,25 @@ class HttpClientSuccessTests(unittest.IsolatedAsyncioTestCase):
         async def handler(request: httpx.Request) -> httpx.Response:
             self.requests.append(request)
             responses = {
-                ("hardware.test", "GET", "/v1/health/ready"): HEALTH,
-                ("hardware.test", "PUT", "/v1/motion"): MOTION,
-                ("hardware.test", "GET", "/v1/telemetry"): TELEMETRY,
-                ("video.test", "GET", "/v1/health/ready"): HEALTH,
-                ("video.test", "POST", "/v1/recordings"): RECORDING,
-                ("video.test", "DELETE", "/v1/recordings/current"): {
-                    **RECORDING,
-                    "state": "stopped",
-                    "stopped_at": "2026-10-09T12:01:00Z",
+                ("controller.test", "GET", "/status"): CONTROLLER_STATUS,
+                ("controller.test", "POST", "/steer"): {
+                    "angle_deg": 11.25,
+                    "steering_us": 1562.5,
                 },
-                ("video.test", "GET", "/v1/status"): RECORDING,
+                ("controller.test", "POST", "/forward"): {
+                    "status": "forward",
+                    "motor_us": 1725.0,
+                },
+                ("controller.test", "POST", "/backward"): {
+                    "status": "backward",
+                    "motor_us": 1375.0,
+                },
+                ("controller.test", "POST", "/neutral"): {
+                    "status": "neutral",
+                },
+                ("video.test", "GET", "/status"): {"stream": "stopped"},
+                ("video.test", "POST", "/stream/start"): {"status": "started"},
+                ("video.test", "POST", "/stream/stop"): {"status": "stopped"},
             }
             body = responses[(request.url.host, request.method, request.url.path)]
             return httpx.Response(200, json=body)
@@ -67,7 +62,7 @@ class HttpClientSuccessTests(unittest.IsolatedAsyncioTestCase):
         self.http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         self.hardware = HttpHardwareClient(
             self.http_client,
-            "http://hardware.test",
+            "http://controller.test",
         )
         self.video = HttpVideoClient(self.http_client, "http://video.test")
 
@@ -91,25 +86,59 @@ class HttpClientSuccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(health.ready)
         self.assertEqual(7, motion.accepted_sequence)
         self.assertEqual(7, telemetry.last_sequence)
-        sent_motion = self.requests[1]
-        self.assertEqual("PUT", sent_motion.method)
-        self.assertEqual(7, json.loads(sent_motion.content)["sequence"])
+        self.assertEqual(0.25, telemetry.steering)
+        self.assertEqual(0.5, telemetry.throttle)
+
+        steering_request = self.requests[1]
+        motor_request = self.requests[2]
+        self.assertEqual("/steer", steering_request.url.path)
+        self.assertEqual("11.25", steering_request.url.params["deg"])
+        self.assertEqual("/forward", motor_request.url.path)
+        self.assertEqual("175.0", motor_request.url.params["delta"])
+
+    async def test_zero_throttle_stops_before_steering(self) -> None:
+        command = MotionCommand.model_validate(
+            {
+                "steering": 0.25,
+                "throttle": 0.0,
+                "sequence": 8,
+                "client_sent_at": "2026-10-09T11:59:59Z",
+            }
+        )
+
+        await self.hardware.apply_motion(command)
+
+        self.assertEqual("/neutral", self.requests[0].url.path)
+        self.assertEqual("/steer", self.requests[1].url.path)
+
+    async def test_negative_throttle_uses_backward(self) -> None:
+        command = MotionCommand.model_validate(
+            {
+                "steering": 0.0,
+                "throttle": -0.5,
+                "sequence": 9,
+                "client_sent_at": "2026-10-09T11:59:59Z",
+            }
+        )
+
+        await self.hardware.apply_motion(command)
+
+        self.assertEqual("/steer", self.requests[0].url.path)
+        self.assertEqual("/backward", self.requests[1].url.path)
+        self.assertEqual("175.0", self.requests[1].url.params["delta"])
 
     async def test_video_contract_calls(self) -> None:
         health = await self.video.health()
-        started = await self.video.start_recording("request-1")
-        stopped = await self.video.stop_recording()
+        started = await self.video.start_stream()
+        stopped = await self.video.stop_stream()
         current = await self.video.status()
 
         self.assertTrue(health.ready)
-        self.assertEqual("recording-1", started.recording_id)
-        self.assertEqual("stopped", stopped.state.value)
-        self.assertEqual("recording-1", current.recording_id)
-        start_request = self.requests[1]
-        self.assertEqual(
-            {"request_id": "request-1"},
-            json.loads(start_request.content),
-        )
+        self.assertEqual("running", started.stream.value)
+        self.assertEqual("stopped", stopped.stream.value)
+        self.assertEqual("stopped", current.stream.value)
+        self.assertEqual("/stream/start", self.requests[1].url.path)
+        self.assertEqual("/stream/stop", self.requests[2].url.path)
 
 
 class HttpClientFailureTests(unittest.IsolatedAsyncioTestCase):
@@ -118,7 +147,7 @@ class HttpClientFailureTests(unittest.IsolatedAsyncioTestCase):
         handler: object,
     ) -> tuple[httpx.AsyncClient, HttpHardwareClient]:
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        return client, HttpHardwareClient(client, "http://hardware.test")
+        return client, HttpHardwareClient(client, "http://controller.test")
 
     async def test_timeout_has_stable_failure(self) -> None:
         async def handler(request: httpx.Request) -> httpx.Response:
