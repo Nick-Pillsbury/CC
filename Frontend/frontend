@@ -1,0 +1,29 @@
+Front End prep/resarch:
+
+# Requirements
+ - Take in Xbox input (Input Library)
+ - Call API based on Input
+ - Display video stream on second window on run
+
+# Controller
+- using inputs libary to simply take pad inputs
+- Use inputs to communicated with API to send the signals to the car.
+- Need to : Decide inputs, test them w/real controller
+
+Example chunk of reading controller input:
+>>> from inputs import get_gamepad
+>>> while 1:
+...     events = get_gamepad()
+...     for event in events:
+...         print(event.ev_type, event.code, event.state)
+
+link to docs: https://inputs.readthedocs.io/en/latest/user/quickstart.html
+# Stream
+- stream: http://10.0.0.51:8889/stream/
+- Use webview-python
+https://pypi.org/project/webview-python/
+- run controller script behind stream
+
+ex: 
+export WEBVIEW_DOWNLOAD_BASE="http://10.0.0.51:8889/stream/"
+
