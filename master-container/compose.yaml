@@ -1,0 +1,62 @@
+name: cc
+
+services:
+  master:
+    build:
+      context: .
+    environment:
+      MASTER_API_CLIENT_MODE: http
+      MASTER_API_CONTROLLER_BASE_URL: http://controller:8002
+      MASTER_API_VIDEO_BASE_URL: http://video:8001
+    ports:
+      - "8000:8000"
+    depends_on:
+      controller:
+        condition: service_healthy
+      video:
+        condition: service_healthy
+    restart: unless-stopped
+
+  controller:
+    build:
+      context: ../controller-container
+    expose:
+      - "8002"
+    devices:
+      - "${CC_I2C_DEVICE:-/dev/i2c-1}:/dev/i2c-1"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8002/status', timeout=1)
+      interval: 10s
+      timeout: 2s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  video:
+    build:
+      context: ../video-container
+    environment:
+      CAMERA_DEVICE: /dev/video0
+    expose:
+      - "8001"
+    devices:
+      - "${CC_CAMERA_DEVICE:-/dev/video0}:/dev/video0"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - >-
+          import urllib.request;
+          urllib.request.urlopen('http://127.0.0.1:8001/status', timeout=1)
+      interval: 10s
+      timeout: 2s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped

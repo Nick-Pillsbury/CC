@@ -44,12 +44,57 @@ addresses of the Controller and Video APIs:
 ```bash
 docker run --rm -p 8000:8000 \
   -e MASTER_API_CLIENT_MODE=http \
-  -e MASTER_API_CONTROLLER_BASE_URL=http://10.0.0.50:8000 \
-  -e MASTER_API_VIDEO_BASE_URL=http://10.0.0.51:8000 \
+  -e MASTER_API_CONTROLLER_BASE_URL=http://10.0.0.50:8002 \
+  -e MASTER_API_VIDEO_BASE_URL=http://10.0.0.51:8001 \
   cc-master-api
 ```
 
 Open `http://SERVER_WIREGUARD_IP:8000/docs` to view the API documentation.
+
+### Run the three containers together
+
+The included `compose.yaml` builds the existing sibling Controller and Video
+projects without modifying or tracking them. Keep this local layout:
+
+```text
+CC/
++-- master-container/
++-- controller-container/
++-- video-container/
+```
+
+On the Raspberry Pi, start the stack from the Master project:
+
+```bash
+cd master-container
+docker compose up --build -d
+docker compose ps
+```
+
+The compose network resolves the services as `controller` and `video`. The
+Master API runs in HTTP mode and connects to their actual internal ports:
+Controller `8002` and Video `8001`. Only the Master API is published to the
+host, on port `8000`; downstream API ports stay inside the compose network.
+
+The default device mappings are `/dev/i2c-1` for the Controller and
+`/dev/video0` for Video. Override a host device without editing the compose
+file when necessary:
+
+```bash
+CC_I2C_DEVICE=/dev/i2c-0 CC_CAMERA_DEVICE=/dev/video2 docker compose up --build -d
+```
+
+Check the full path through the Master after the services start:
+
+```bash
+curl http://127.0.0.1:8000/api/v1/health/live
+curl http://127.0.0.1:8000/api/v1/health/ready
+curl http://127.0.0.1:8000/api/v1/video/status
+```
+
+`health/live` verifies the Master process. `health/ready` also calls both
+downstream containers and returns `503` when the Controller reports that its
+hardware is offline or either dependency cannot be reached.
 
 ### Project layout
 
@@ -79,8 +124,8 @@ shutdown. Configure HTTP mode before starting Uvicorn:
 
 ```powershell
 $env:MASTER_API_CLIENT_MODE = "http"
-$env:MASTER_API_CONTROLLER_BASE_URL = "http://controller:8000"
-$env:MASTER_API_VIDEO_BASE_URL = "http://video:8000"
+$env:MASTER_API_CONTROLLER_BASE_URL = "http://controller:8002"
+$env:MASTER_API_VIDEO_BASE_URL = "http://video:8001"
 python -m uvicorn master_api.main:app --reload
 ```
 
@@ -89,8 +134,8 @@ All supported settings are environment variables:
 | Variable | Default |
 | --- | --- |
 | `MASTER_API_CLIENT_MODE` | `mock` |
-| `MASTER_API_CONTROLLER_BASE_URL` | `http://controller:8000` |
-| `MASTER_API_VIDEO_BASE_URL` | `http://video:8000` |
+| `MASTER_API_CONTROLLER_BASE_URL` | `http://controller:8002` |
+| `MASTER_API_VIDEO_BASE_URL` | `http://video:8001` |
 | `MASTER_API_HTTP_CONNECT_TIMEOUT_SECONDS` | `0.5` |
 | `MASTER_API_HTTP_READ_TIMEOUT_SECONDS` | `0.5` |
 | `MASTER_API_HTTP_WRITE_TIMEOUT_SECONDS` | `0.5` |
@@ -110,8 +155,11 @@ exist:
 
 Public steering and throttle values remain normalized from `-1.0` to `1.0`.
 The adapter converts steering to `-45` through `45` degrees and throttle to the
-Controller's `0` through `350` microsecond delta. The repository intentionally
-ignores the top-level `Controller/` and `Video/` folders.
+Controller's `0` through `350` microsecond delta. It also converts the
+Controller's lower-forward/higher-reverse PWM convention back to the public
+API's positive-forward convention when reporting telemetry. The repository
+intentionally tracks only `master-container/`; the sibling
+`controller-container/` and `video-container/` folders are ignored.
 
 Timeouts return `504 downstream_timeout`, connection failures return
 `503 downstream_unavailable`, and unsuccessful or invalid downstream responses

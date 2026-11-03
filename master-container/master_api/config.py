@@ -38,8 +38,8 @@ class Settings:
     """Settings needed to choose and configure downstream clients."""
 
     client_mode: str = "mock"
-    controller_base_url: str = "http://controller:8000"
-    video_base_url: str = "http://video:8000"
+    controller_base_url: str = "http://controller:8002"
+    video_base_url: str = "http://video:8001"
     connect_timeout_seconds: float = 0.5
     read_timeout_seconds: float = 0.5
     write_timeout_seconds: float = 0.5
@@ -59,12 +59,12 @@ class Settings:
             controller_base_url=_http_base_url(
                 source,
                 "MASTER_API_CONTROLLER_BASE_URL",
-                "http://controller:8000",
+                "http://controller:8002",
             ),
             video_base_url=_http_base_url(
                 source,
                 "MASTER_API_VIDEO_BASE_URL",
-                "http://video:8000",
+                "http://video:8001",
             ),
             connect_timeout_seconds=_positive_float(
                 source, "MASTER_API_HTTP_CONNECT_TIMEOUT_SECONDS", 0.5

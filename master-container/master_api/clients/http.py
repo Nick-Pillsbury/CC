@@ -1,6 +1,6 @@
 """Asynchronous HTTP clients for hardware and video containers."""
 
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -39,9 +39,12 @@ class _ControllerStatus(BaseModel):
     state: _ControllerState
 
 
-class _ControllerCommandResponse(BaseModel):
-    status: str | None = None
-    angle_deg: float | None = None
+class _ControllerSteeringResponse(BaseModel):
+    angle_deg: float
+
+
+class _ControllerMotorResponse(BaseModel):
+    status: Literal["forward", "backward", "backwards", "neutral"]
 
 
 class _VideoCommandResponse(BaseModel):
@@ -116,13 +119,13 @@ class HttpHardwareClient(_HttpDownstreamClient):
 
         if command.throttle == 0:
             # Stop first so a steering failure cannot leave the car moving.
-            await self._send_command("/neutral")
-            await self._send_command("/steer", deg=steering_degrees)
+            await self._send_motor_command("/neutral")
+            await self._send_steering_command(steering_degrees)
         else:
             # Set steering before starting the motor.
-            await self._send_command("/steer", deg=steering_degrees)
+            await self._send_steering_command(steering_degrees)
             direction = "/forward" if command.throttle > 0 else "/backward"
-            await self._send_command(direction, delta=throttle_delta)
+            await self._send_motor_command(direction, delta=throttle_delta)
 
         self._last_sequence = command.sequence
         values = ControlValues(
@@ -139,7 +142,9 @@ class HttpHardwareClient(_HttpDownstreamClient):
     async def telemetry(self) -> HardwareTelemetry:
         status = await self._status()
         steering = status.state.angle_deg / MAX_STEERING_DEGREES
-        throttle = (status.state.motor_us - MOTOR_NEUTRAL_US) / MOTOR_RANGE_US
+        # The Controller uses lower pulse widths for forward motion and higher
+        # pulse widths for reverse, while the public API uses positive forward.
+        throttle = (MOTOR_NEUTRAL_US - status.state.motor_us) / MOTOR_RANGE_US
         return HardwareTelemetry(
             steering=max(-1.0, min(1.0, steering)),
             throttle=max(-1.0, min(1.0, throttle)),
@@ -150,11 +155,23 @@ class HttpHardwareClient(_HttpDownstreamClient):
     async def _status(self) -> _ControllerStatus:
         return await self._request("GET", "/status", _ControllerStatus)
 
-    async def _send_command(self, path: str, **parameters: float) -> None:
+    async def _send_steering_command(self, steering_degrees: float) -> None:
+        await self._request(
+            "POST",
+            "/steer",
+            _ControllerSteeringResponse,
+            params={"deg": steering_degrees},
+        )
+
+    async def _send_motor_command(
+        self,
+        path: str,
+        **parameters: float,
+    ) -> None:
         await self._request(
             "POST",
             path,
-            _ControllerCommandResponse,
+            _ControllerMotorResponse,
             params=parameters,
         )
 

@@ -22,7 +22,7 @@ CONTROLLER_STATUS = {
     "hardware_online": True,
     "frequency_hz": 50,
     "state": {
-        "motor_us": 1725.0,
+        "motor_us": 1375.0,
         "steering_us": 1562.5,
         "angle_deg": 11.25,
     },
@@ -43,11 +43,11 @@ class HttpClientSuccessTests(unittest.IsolatedAsyncioTestCase):
                 },
                 ("controller.test", "POST", "/forward"): {
                     "status": "forward",
-                    "motor_us": 1725.0,
+                    "motor_us": 1375.0,
                 },
                 ("controller.test", "POST", "/backward"): {
-                    "status": "backward",
-                    "motor_us": 1375.0,
+                    "status": "backwards",
+                    "motor_us": 1725.0,
                 },
                 ("controller.test", "POST", "/neutral"): {
                     "status": "neutral",
@@ -127,6 +127,11 @@ class HttpClientSuccessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("/backward", self.requests[1].url.path)
         self.assertEqual("175.0", self.requests[1].url.params["delta"])
 
+    async def test_telemetry_maps_controller_pwm_direction(self) -> None:
+        telemetry = await self.hardware.telemetry()
+
+        self.assertEqual(0.5, telemetry.throttle)
+
     async def test_video_contract_calls(self) -> None:
         health = await self.video.health()
         started = await self.video.start_stream()
@@ -195,6 +200,26 @@ class HttpClientFailureTests(unittest.IsolatedAsyncioTestCase):
                 await hardware.health()
 
         self.assertEqual("downstream_response_invalid", caught.exception.code)
+
+    async def test_invalid_command_acknowledgement_is_rejected(self) -> None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/steer":
+                return httpx.Response(200, json={"unexpected": "response"})
+            return httpx.Response(200, json={"status": "forward"})
+
+        client, hardware = await self._hardware_with_handler(handler)
+        command = MotionCommand.model_validate(
+            {
+                "steering": 0.25,
+                "throttle": 0.5,
+                "sequence": 10,
+                "client_sent_at": "2026-10-09T11:59:59Z",
+            }
+        )
+
+        async with client:
+            with self.assertRaises(DownstreamResponseError):
+                await hardware.apply_motion(command)
 
 
 class DownstreamErrorEndpointTests(unittest.TestCase):

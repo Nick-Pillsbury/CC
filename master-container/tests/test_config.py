@@ -35,6 +35,8 @@ class SettingsTests(unittest.TestCase):
         settings = Settings.from_env({})
 
         self.assertEqual("mock", settings.client_mode)
+        self.assertEqual("http://controller:8002", settings.controller_base_url)
+        self.assertEqual("http://video:8001", settings.video_base_url)
 
     def test_unknown_client_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ConfigurationError, "must be either"):
