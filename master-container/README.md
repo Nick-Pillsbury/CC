@@ -12,8 +12,9 @@ services; route code does not change between modes.
 The process owns an explicit system state (`STARTING`, `READY`, `CONTROLLED`,
 `DEGRADED`, `EMERGENCY_STOP`, or `SHUTTING_DOWN`). Dependency health updates
 that state, `GET /api/v1/system/state` exposes the latest transition, and motion
-commands are rejected unless the state is `CONTROLLED`. Control-lease endpoints
-will own the `READY` to `CONTROLLED` transition in the next implementation phase.
+commands are rejected unless the state is `CONTROLLED`. A short-lived exclusive
+control lease owns the `READY` to `CONTROLLED` transition and automatically
+neutralizes the car when it expires or is released.
 Clients can subscribe to `WS /api/v1/system/state/ws` to receive the current
 state immediately and every later transition. Each subscriber uses a bounded
 latest-value queue, so a slow frontend cannot block command or health handling.
@@ -50,6 +51,86 @@ docker run --rm -p 8000:8000 \
 ```
 
 Open `http://SERVER_WIREGUARD_IP:8000/docs` to view the API documentation.
+
+### Deploy into an existing server Compose stack
+
+GitHub is not part of the runtime path. Copy this `master-container` directory
+to the server over SSH/WireGuard, then make sure the server's existing Compose
+service builds that directory and supplies these values:
+
+```yaml
+services:
+  master:
+    build: ./master-container
+    environment:
+      MASTER_API_CLIENT_MODE: http
+      MASTER_API_CONTROLLER_BASE_URL: http://CONTROLLER_WIREGUARD_IP:8002
+      MASTER_API_VIDEO_BASE_URL: http://VIDEO_WIREGUARD_IP:8001
+      MASTER_API_CONTROL_LEASE_SECONDS: 2.0
+    ports:
+      - "8000:8000"
+```
+
+Rebuild only the Master service using the service name from the server's
+Compose file:
+
+```bash
+docker compose up -d --build master
+docker compose ps master
+docker compose logs --tail=100 master
+```
+
+From another WireGuard peer, `GET /ping` verifies that the server and Master
+API are reachable without calling the car:
+
+```bash
+curl http://SERVER_WIREGUARD_IP:8000/ping
+curl http://SERVER_WIREGUARD_IP:8000/api/v1/health/ready
+```
+
+The readiness request must succeed before control can be acquired. It verifies
+both downstream APIs and moves the system from `STARTING` to `READY`.
+
+### Test-drive control sequence
+
+Acquire exclusive control and save the returned `lease_id`:
+
+```bash
+curl -X POST http://SERVER_WIREGUARD_IP:8000/api/v1/control/lease \
+  -H "Content-Type: application/json" \
+  -d '{"client_id":"manual-test-driver"}'
+```
+
+The driver must send `POST /api/v1/control/lease/heartbeat` with the
+`X-Control-Lease` header at least once every second. The default lease lasts two
+seconds, so a lost client is neutralized quickly. Send increasing motion
+sequence numbers through the same lease:
+
+```bash
+curl -X POST http://SERVER_WIREGUARD_IP:8000/api/v1/control/lease/heartbeat \
+  -H "X-Control-Lease: LEASE_ID"
+
+curl -X PUT http://SERVER_WIREGUARD_IP:8000/api/v1/control/motion \
+  -H "Content-Type: application/json" \
+  -H "X-Control-Lease: LEASE_ID" \
+  -d '{"steering":0.0,"throttle":0.15,"sequence":1,"client_sent_at":"2026-11-03T12:00:00Z"}'
+```
+
+Stop and release control explicitly when the test ends:
+
+```bash
+curl -X DELETE http://SERVER_WIREGUARD_IP:8000/api/v1/control/lease \
+  -H "X-Control-Lease: LEASE_ID"
+```
+
+`POST /api/v1/control/emergency-stop` is available without a lease so another
+client can request an immediate neutral command. Reset requires both downstream
+services to be healthy:
+
+```bash
+curl -X POST http://SERVER_WIREGUARD_IP:8000/api/v1/control/emergency-stop
+curl -X POST http://SERVER_WIREGUARD_IP:8000/api/v1/control/emergency-stop/reset
+```
 
 ### Run the three containers together
 
@@ -140,6 +221,7 @@ All supported settings are environment variables:
 | `MASTER_API_HTTP_READ_TIMEOUT_SECONDS` | `0.5` |
 | `MASTER_API_HTTP_WRITE_TIMEOUT_SECONDS` | `0.5` |
 | `MASTER_API_HTTP_POOL_TIMEOUT_SECONDS` | `0.5` |
+| `MASTER_API_CONTROL_LEASE_SECONDS` | `2.0` |
 
 The Master API translates its small public contract to the APIs that already
 exist:
