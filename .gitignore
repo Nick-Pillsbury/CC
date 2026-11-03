@@ -1,2 +1,6 @@
-/Controller/
-/Video/
+# This repository checkout owns only the Master container. The Controller and
+# Video containers may be present beside it for local integration, but they are
+# maintained independently and must not be committed here.
+/*
+!/.gitignore
+!/master-container/

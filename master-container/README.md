@@ -21,21 +21,44 @@ latest-value queue, so a slow frontend cannot block command or health handling.
 From the `CC` repository folder, install and run it with:
 
 ```powershell
-Set-Location master_api
+Set-Location master-container
 python -m pip install -r requirements.txt
 python -m uvicorn master_api.main:app --reload
 ```
 
 Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
 
+### Docker
+
+Build the image from the outer `master-container` project folder. The Dockerfile
+installs every package listed in `requirements.txt` and copies the application
+code into the image.
+
+```bash
+docker build -t cc-master-api .
+```
+
+Run it in HTTP mode and replace the example addresses with the WireGuard
+addresses of the Controller and Video APIs:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e MASTER_API_CLIENT_MODE=http \
+  -e MASTER_API_CONTROLLER_BASE_URL=http://10.0.0.50:8000 \
+  -e MASTER_API_VIDEO_BASE_URL=http://10.0.0.51:8000 \
+  cc-master-api
+```
+
+Open `http://SERVER_WIREGUARD_IP:8000/docs` to view the API documentation.
+
 ### Project layout
 
-The two `master_api` names have different purposes: the outer folder is the
-project folder, while the inner folder is the importable Python package.
+The outer `master-container` folder is the container project, while the inner
+`master_api` folder is the importable Python package.
 
 ```text
 CC/
-+-- master_api/              # Project folder
++-- master-container/       # Container project folder
     +-- master_api/          # Python application package
     |   +-- api/             # HTTP and WebSocket routes
     |   +-- clients/         # Controller and Video integrations
@@ -44,6 +67,7 @@ CC/
     |   +-- state.py         # Safety-related system state
     +-- tests/               # Automated tests
     +-- Research/            # Design notes and interface drafts
+    +-- Dockerfile           # Container build instructions
     +-- requirements.txt     # Python dependencies
 ```
 

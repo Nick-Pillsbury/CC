@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.gitignore
+AGENTS.md
+CC_Proposal.pdf
+LICENSE
+README.md
+Research/
+tests/
