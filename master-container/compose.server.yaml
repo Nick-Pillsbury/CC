@@ -1,0 +1,11 @@
+# Optional override for the existing /home/nick/compose.yaml.
+# Run from /home/nick:
+# docker compose -f compose.yaml -f master-container/compose.server.yaml up -d --build --no-deps master-api
+services:
+  master-api:
+    environment:
+      MASTER_API_CLIENT_MODE: http
+      MASTER_API_CONTROLLER_BASE_URL: http://controller-api:8002
+      MASTER_API_VIDEO_BASE_URL: http://host.docker.internal:8001
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

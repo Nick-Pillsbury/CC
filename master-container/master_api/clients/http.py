@@ -191,11 +191,23 @@ class HttpVideoClient(_HttpDownstreamClient):
         )
 
     async def start_stream(self) -> VideoStatus:
-        await self._request("POST", "/stream/start", _VideoCommandResponse)
+        # Video waits one second for ffmpeg startup; stopping can take five.
+        # Keep the short controller deadlines, but allow video commands 8s.
+        timeout = httpx.Timeout(self._http_client.timeout)
+        timeout.read = 8.0
+        await self._request(
+            "POST", "/stream/start", _VideoCommandResponse,
+            timeout=timeout,
+        )
         return VideoStatus(stream=StreamState.RUNNING)
 
     async def stop_stream(self) -> VideoStatus:
-        await self._request("POST", "/stream/stop", _VideoCommandResponse)
+        timeout = httpx.Timeout(self._http_client.timeout)
+        timeout.read = 8.0
+        await self._request(
+            "POST", "/stream/stop", _VideoCommandResponse,
+            timeout=timeout,
+        )
         return VideoStatus(stream=StreamState.STOPPED)
 
     async def status(self) -> VideoStatus:

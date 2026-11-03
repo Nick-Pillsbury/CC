@@ -5,6 +5,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from master_api.clients.base import HardwareClient
+from master_api.clients.errors import DownstreamError
 from master_api.models import (
     ControlLeaseResponse,
     MotionCommand,
@@ -115,7 +116,21 @@ class ControlLeaseManager:
                     "Motion sequence must be greater than the last accepted sequence.",
                 )
 
-            response = await self._hardware.apply_motion(command)
+            try:
+                response = await self._hardware.apply_motion(command)
+            except DownstreamError:
+                # A two-part command can fail after steering/motor changes.
+                # Invalidate ownership and attempt neutral before returning.
+                self._active = None
+                self._last_sequence = None
+                await self._state_machine.transition(
+                    SystemState.EMERGENCY_STOP, "Motion command failed",
+                )
+                try:
+                    await self._hardware.stop()
+                except DownstreamError:
+                    pass  # Keep the original failure; stop is not confirmed.
+                raise
             self._last_sequence = command.sequence
             return response
 
