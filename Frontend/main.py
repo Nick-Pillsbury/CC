@@ -1,6 +1,6 @@
 import sys
-from PyQt6.QtCore import QUrl
-from PyQt6.QtWidgets import QApplication, QMainWindow
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QStackedLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage
 
@@ -14,11 +14,20 @@ class StreamOverlayApp(QMainWindow):
         self.setWindowTitle("Video Stream Overlay")
         self.resize(1024, 600)
 
+        container = QWidget()
+        self.stack_layout = QStackedLayout(container)
+        self.stack_layout.setStackingMode(QStackedLayout.StackingMode.StackAll)
+        self.setCentralWidget(container)
+
         self.web_view = QWebEngineView()
         self.web_page = StreamWebPage(self.web_view)
         self.web_view.setPage(self.web_page)
         self.web_view.setUrl(QUrl(stream_url))
-        self.setCentralWidget(self.web_view)
+        self.stack_layout.addWidget(self.web_view)
+
+        self.overlay_widget = QWidget()
+        self.overlay_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.stack_layout.addWidget(self.overlay_widget)
 
 if __name__ == "__main__":
     sys.argv.append("--ignore-certificate-errors")
