@@ -34,6 +34,10 @@ class LivenessResponse(BaseModel):
     status: str = "alive"
 
 
+class PingResponse(BaseModel):
+    status: str = "ok"
+
+
 class ReadinessResponse(BaseModel):
     ready: bool
     system_state: SystemState
@@ -48,6 +52,19 @@ class MotionCommand(BaseModel):
     throttle: float = Field(ge=-1.0, le=1.0, allow_inf_nan=False)
     sequence: int = Field(ge=0)
     client_sent_at: datetime
+
+
+class ControlLeaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: str = Field(min_length=1, max_length=128)
+
+
+class ControlLeaseResponse(BaseModel):
+    lease_id: str
+    client_id: str
+    acquired_at: datetime
+    expires_at: datetime
 
 
 class ControlValues(BaseModel):

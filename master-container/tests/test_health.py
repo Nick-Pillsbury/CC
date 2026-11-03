@@ -4,6 +4,12 @@ from tests.base import ApiTestCase
 
 
 class HealthEndpointTests(ApiTestCase):
+    def test_ping_reports_server_reachable(self) -> None:
+        response = self.client.get("/ping")
+
+        self.assertEqual(200, response.status_code)
+        self.assertEqual({"status": "ok"}, response.json())
+
     def test_liveness_reports_alive(self) -> None:
         response = self.client.get("/api/v1/health/live")
 
@@ -33,6 +39,11 @@ class HealthEndpointTests(ApiTestCase):
         paths = self.client.get("/openapi.json").json()["paths"]
 
         expected = {
+            "/ping",
+            "/api/v1/control/emergency-stop",
+            "/api/v1/control/emergency-stop/reset",
+            "/api/v1/control/lease",
+            "/api/v1/control/lease/heartbeat",
             "/api/v1/control/motion",
             "/api/v1/health/live",
             "/api/v1/health/ready",

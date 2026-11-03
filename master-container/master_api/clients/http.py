@@ -152,6 +152,9 @@ class HttpHardwareClient(_HttpDownstreamClient):
             sampled_at=utc_now(),
         )
 
+    async def stop(self) -> None:
+        await self._send_motor_command("/neutral")
+
     async def _status(self) -> _ControllerStatus:
         return await self._request("GET", "/status", _ControllerStatus)
 

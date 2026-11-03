@@ -44,6 +44,7 @@ class Settings:
     read_timeout_seconds: float = 0.5
     write_timeout_seconds: float = 0.5
     pool_timeout_seconds: float = 0.5
+    control_lease_seconds: float = 2.0
 
     @classmethod
     def from_env(cls, values: Mapping[str, str] | None = None) -> "Settings":
@@ -77,6 +78,9 @@ class Settings:
             ),
             pool_timeout_seconds=_positive_float(
                 source, "MASTER_API_HTTP_POOL_TIMEOUT_SECONDS", 0.5
+            ),
+            control_lease_seconds=_positive_float(
+                source, "MASTER_API_CONTROL_LEASE_SECONDS", 2.0
             ),
         )
 

@@ -35,6 +35,10 @@ class MockHardwareClient:
             hardware_received_at=utc_now(),
         )
 
+    async def stop(self) -> None:
+        self.steering = 0.0
+        self.throttle = 0.0
+
     async def telemetry(self) -> HardwareTelemetry:
         return HardwareTelemetry(
             steering=self.steering,

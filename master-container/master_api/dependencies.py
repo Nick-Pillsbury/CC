@@ -7,6 +7,7 @@ from fastapi import Depends
 from starlette.requests import HTTPConnection
 
 from master_api.clients.base import HardwareClient, VideoClient
+from master_api.lease import ControlLeaseManager
 from master_api.state import SystemStateMachine
 
 
@@ -17,6 +18,15 @@ class ServiceContainer:
     hardware: HardwareClient
     video: VideoClient
     state_machine: SystemStateMachine = field(default_factory=SystemStateMachine)
+    lease_duration_seconds: float = 2.0
+    lease_manager: ControlLeaseManager = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.lease_manager = ControlLeaseManager(
+            self.hardware,
+            self.state_machine,
+            self.lease_duration_seconds,
+        )
 
 
 def get_services(connection: HTTPConnection) -> ServiceContainer:

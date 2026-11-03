@@ -14,7 +14,8 @@ from master_api.clients.http import HttpHardwareClient, HttpVideoClient
 from master_api.clients.mock import MockHardwareClient, MockVideoClient
 from master_api.config import Settings
 from master_api.dependencies import ServiceContainer
-from master_api.models import SystemState
+from master_api.lease import ControlLeaseError
+from master_api.models import PingResponse, SystemState
 from master_api.state import StateConflictError
 
 
@@ -29,13 +30,17 @@ def create_app(
         # Tests can provide their own clients instead of creating runtime clients.
         if services is not None:
             application.state.services = services
+            await services.lease_manager.start()
             try:
                 yield
             finally:
-                await services.state_machine.transition(
-                    target=SystemState.SHUTTING_DOWN,
-                    reason="Application shutdown started",
-                )
+                try:
+                    await services.lease_manager.shutdown()
+                finally:
+                    await services.state_machine.transition(
+                        target=SystemState.SHUTTING_DOWN,
+                        reason="Application shutdown started",
+                    )
             return
 
         runtime_settings = settings or Settings.from_env()
@@ -45,14 +50,20 @@ def create_app(
             application.state.services = ServiceContainer(
                 hardware=MockHardwareClient(),
                 video=MockVideoClient(),
+                lease_duration_seconds=runtime_settings.control_lease_seconds,
             )
+            runtime_services = application.state.services
+            await runtime_services.lease_manager.start()
             try:
                 yield
             finally:
-                await application.state.services.state_machine.transition(
-                    target=SystemState.SHUTTING_DOWN,
-                    reason="Application shutdown started",
-                )
+                try:
+                    await runtime_services.lease_manager.shutdown()
+                finally:
+                    await runtime_services.state_machine.transition(
+                        target=SystemState.SHUTTING_DOWN,
+                        reason="Application shutdown started",
+                    )
             return
 
         # HTTP mode shares one client between the hardware and video services.
@@ -68,14 +79,20 @@ def create_app(
                     http_client,
                     runtime_settings.video_base_url,
                 ),
+                lease_duration_seconds=runtime_settings.control_lease_seconds,
             )
+            runtime_services = application.state.services
+            await runtime_services.lease_manager.start()
             try:
                 yield
             finally:
-                await application.state.services.state_machine.transition(
-                    target=SystemState.SHUTTING_DOWN,
-                    reason="Application shutdown started",
-                )
+                try:
+                    await runtime_services.lease_manager.shutdown()
+                finally:
+                    await runtime_services.state_machine.transition(
+                        target=SystemState.SHUTTING_DOWN,
+                        reason="Application shutdown started",
+                    )
 
     app = FastAPI(
         title="CC Master API",
@@ -123,6 +140,28 @@ def create_app(
                 }
             },
         )
+
+    @app.exception_handler(ControlLeaseError)
+    async def handle_control_lease_error(
+        request: Request,
+        exc: ControlLeaseError,
+    ) -> JSONResponse:
+        del request
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "retryable": exc.retryable,
+                }
+            },
+        )
+
+    @app.get("/ping", response_model=PingResponse, tags=["health"])
+    async def ping() -> PingResponse:
+        """Lightweight server reachability check for WireGuard clients."""
+        return PingResponse()
 
     api_prefix = "/api/v1"
     app.include_router(health.router, prefix=api_prefix)

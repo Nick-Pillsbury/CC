@@ -232,16 +232,24 @@ class DownstreamErrorEndpointTests(unittest.TestCase):
                     "The hardware service did not respond before its deadline.",
                 )
 
+            async def stop(self) -> None:
+                return None
+
         app = create_app(
             ServiceContainer(
                 hardware=TimedOutHardware(),  # type: ignore[arg-type]
                 video=object(),  # type: ignore[arg-type]
-                state_machine=SystemStateMachine(SystemState.CONTROLLED),
+                state_machine=SystemStateMachine(SystemState.READY),
             )
         )
         with TestClient(app) as client:
+            lease = client.post(
+                "/api/v1/control/lease",
+                json={"client_id": "timeout-test"},
+            ).json()
             response = client.put(
                 "/api/v1/control/motion",
+                headers={"X-Control-Lease": lease["lease_id"]},
                 json={
                     "steering": 0.0,
                     "throttle": 0.0,

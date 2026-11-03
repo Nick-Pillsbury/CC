@@ -16,6 +16,7 @@ class SettingsTests(unittest.TestCase):
                 "MASTER_API_HTTP_READ_TIMEOUT_SECONDS": "0.2",
                 "MASTER_API_HTTP_WRITE_TIMEOUT_SECONDS": "0.3",
                 "MASTER_API_HTTP_POOL_TIMEOUT_SECONDS": "0.4",
+                "MASTER_API_CONTROL_LEASE_SECONDS": "3.0",
             }
         )
 
@@ -30,6 +31,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(0.2, timeout.read)
         self.assertEqual(0.3, timeout.write)
         self.assertEqual(0.4, timeout.pool)
+        self.assertEqual(3.0, settings.control_lease_seconds)
 
     def test_mock_mode_is_the_safe_default(self) -> None:
         settings = Settings.from_env({})
@@ -37,6 +39,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual("mock", settings.client_mode)
         self.assertEqual("http://controller:8002", settings.controller_base_url)
         self.assertEqual("http://video:8001", settings.video_base_url)
+        self.assertEqual(2.0, settings.control_lease_seconds)
 
     def test_unknown_client_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ConfigurationError, "must be either"):
