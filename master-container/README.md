@@ -1,270 +1,134 @@
-# CC
-The goal of CC is to design and implement a cellular-enabled RC car, modified to run off a Raspberry Pi, for remote driving from anywhere with cell coverage.
+# Master container
 
-## Master API
+The Master API receives requests on port 8000 and forwards them to the
+Controller and Video APIs. `GET /ping` returns `{"status":"ok"}`; it checks
+the Master process only, not the car.
 
-The Master API exposes endpoints for motion control, video streaming, telemetry,
-liveness, and readiness. It uses in-memory mock clients by default so the API and
-frontend can run without the Controller and Video APIs. Set
-`MASTER_API_CLIENT_MODE=http` to forward the same routes to the downstream HTTP
-services; route code does not change between modes.
+## Deploy with your server's Compose file
 
-The process owns an explicit system state (`STARTING`, `READY`, `CONTROLLED`,
-`DEGRADED`, `EMERGENCY_STOP`, or `SHUTTING_DOWN`). Dependency health updates
-that state, `GET /api/v1/system/state` exposes the latest transition, and motion
-commands are rejected unless the state is `CONTROLLED`. A short-lived exclusive
-control lease owns the `READY` to `CONTROLLED` transition and automatically
-neutralizes the car when it expires or is released.
-Clients can subscribe to `WS /api/v1/system/state/ws` to receive the current
-state immediately and every later transition. Each subscriber uses a bounded
-latest-value queue, so a slow frontend cannot block command or health handling.
+Your `/home/nick/compose.yaml` uses these connections:
 
-From the `CC` repository folder, install and run it with:
+| Service | How the Master reaches it |
+| --- | --- |
+| Controller (`controller-api`) | Docker network, `http://controller-api:8002` |
+| Video (`video-api`, host networking) | Host gateway, `http://host.docker.internal:8001` |
+| Master (`master-api`) | Published port `8000` |
+
+Copy the updated `master-container` folder to `/home/nick/master-container`.
+The included override supplies HTTP mode, the two URLs, and the host gateway
+mapping. Use it with the server's existing Compose file:
+
+```bash
+cd /home/nick
+docker compose -f compose.yaml -f master-container/compose.server.yaml up -d --build --no-deps master-api
+docker compose logs --tail=50 master-api
+curl http://127.0.0.1:8000/ping
+curl http://127.0.0.1:8000/api/v1/health/ready
+```
+
+This rebuilds only `master-api`. Controller, Video, and MediaMTX must already
+be running. If the same environment and `extra_hosts` settings have been added
+to the main Compose file, the second `-f` is optional.
+
+The root Compose file is intentionally ignored by Git. The Master override is
+tracked here so it can be deployed with this folder. The old standalone
+three-container Compose file has been removed in favor of your server stack.
+
+## Basic movement tests
+
+Run these on the server, one at a time, with the drive wheels raised initially:
+
+```bash
+cd /home/nick/master-container
+python3 drive_test.py ping
+python3 drive_test.py left
+python3 drive_test.py right
+python3 drive_test.py forward
+```
+
+`left` and `right` apply 11.25 degrees of steering without driving the motor.
+`forward` uses 10% normalized throttle (35 microseconds of PWM adjustment).
+Each test holds for about half a second after acknowledgement, then sends
+neutral, which also centers the steering. Low throttle may be below the motor's
+starting threshold; an HTTP acknowledgement is not proof of physical movement.
+
+The script checks readiness, obtains a lease, sends motion, renews the lease,
+and releases it. It refuses to send movement in mock mode. To run from your
+computer, use Python and the server's WireGuard address:
 
 ```powershell
-Set-Location master-container
-python -m pip install -r requirements.txt
-python -m uvicorn master_api.main:app --reload
+python .\master-container\drive_test.py forward --url http://SERVER_WIREGUARD_IP:8000
 ```
 
-Interactive API documentation is available at `http://127.0.0.1:8000/docs`.
-
-### Docker
-
-Build the image from the outer `master-container` project folder. The Dockerfile
-installs every package listed in `requirements.txt` and copies the application
-code into the image.
+To request a latched stop, or reset it once the car is safe:
 
 ```bash
-docker build -t cc-master-api .
+python3 drive_test.py stop
+python3 drive_test.py reset
 ```
 
-Run it in HTTP mode and replace the example addresses with the WireGuard
-addresses of the Controller and Video APIs:
+Reverse is not included in this tester: the current Controller `/backward`
+route calls `movement.backward`, while its function is named `backwards`.
+That needs to be corrected in the Controller project by its owner.
 
-```bash
-docker run --rm -p 8000:8000 \
-  -e MASTER_API_CLIENT_MODE=http \
-  -e MASTER_API_CONTROLLER_BASE_URL=http://10.0.0.50:8002 \
-  -e MASTER_API_VIDEO_BASE_URL=http://10.0.0.51:8001 \
-  cc-master-api
-```
+## Endpoints and code
 
-Open `http://SERVER_WIREGUARD_IP:8000/docs` to view the API documentation.
+Open `http://SERVER_WIREGUARD_IP:8000/docs` for request schemas.
 
-### Deploy into an existing server Compose stack
+| Master endpoint | Behavior |
+| --- | --- |
+| `GET /ping` | Master reachability |
+| `GET /api/v1/health/ready` | Calls both downstream `/status` routes; healthy checks enable `READY` state |
+| `POST /api/v1/control/lease` | Takes `{"client_id":"driver"}` and grants one driver control |
+| `POST /api/v1/control/lease/heartbeat` | Renews control using `X-Control-Lease` |
+| `PUT /api/v1/control/motion` | Requires lease; sends Controller `/steer` and `/forward`, `/backward`, or `/neutral` |
+| `DELETE /api/v1/control/lease` | Requires lease; sends `/neutral` and releases control |
+| `POST /api/v1/control/emergency-stop` | Invalidates control and sends `/neutral` |
+| `POST /api/v1/control/emergency-stop/reset` | Checks dependencies and sends neutral before clearing the latch |
+| `GET /api/v1/video/status` | Calls Video `/status` |
+| `POST /api/v1/video/stream/start` | Calls Video `/stream/start` |
+| `POST /api/v1/video/stream/stop` | Calls Video `/stream/stop` |
+| `GET /api/v1/telemetry` | Combines controller state and video status |
 
-GitHub is not part of the runtime path. Copy this `master-container` directory
-to the server over SSH/WireGuard, then make sure the server's existing Compose
-service builds that directory and supplies these values:
+For frontend integration, motion contains `steering` and `throttle` in [-1, 1],
+an increasing `sequence`, and a `client_sent_at` timestamp. Renew the lease
+every 0.5 seconds during driving; motion itself does not renew it. The default
+lease expires after two seconds. The readiness call currently precedes lease
+acquisition; the tester handles that automatically.
 
-```yaml
-services:
-  master:
-    build: ./master-container
-    environment:
-      MASTER_API_CLIENT_MODE: http
-      MASTER_API_CONTROLLER_BASE_URL: http://CONTROLLER_WIREGUARD_IP:8002
-      MASTER_API_VIDEO_BASE_URL: http://VIDEO_WIREGUARD_IP:8001
-      MASTER_API_CONTROL_LEASE_SECONDS: 2.0
-    ports:
-      - "8000:8000"
-```
+Read the implementation in this order:
 
-Rebuild only the Master service using the service name from the server's
-Compose file:
+1. `master_api/main.py`: registers routes and selects HTTP or mock clients.
+2. `master_api/api/control.py` and `api/video.py`: public endpoints.
+3. `master_api/clients/http.py`: actual outgoing HTTP requests.
+4. `master_api/lease.py`: ownership, sequence checks, and stop requests.
 
-```bash
-docker compose up -d --build master
-docker compose ps master
-docker compose logs --tail=100 master
-```
+## Configuration and limits
 
-From another WireGuard peer, `GET /ping` verifies that the server and Master
-API are reachable without calling the car:
+Without `MASTER_API_CLIENT_MODE=http`, the app uses mocks and never contacts
+the car. `compose.server.yaml` explicitly enables HTTP mode. The optional
+`server.env.example` lists the connection settings, but is not loaded automatically.
 
-```bash
-curl http://SERVER_WIREGUARD_IP:8000/ping
-curl http://SERVER_WIREGUARD_IP:8000/api/v1/health/ready
-```
+Controller HTTP deadlines default to 0.5 seconds per phase. Video start/stop
+use an 8-second read timeout because the Video API waits for ffmpeg. These
+longer waits do not change controller deadlines.
 
-The readiness request must succeed before control can be acquired. It verifies
-both downstream APIs and moves the system from `STARTING` to `READY`.
+Use one Uvicorn worker and one Master instance: leases live in process memory.
+The API has no user authentication; keep access limited to trusted WireGuard
+peers. Lease expiry, release, shutdown with an active lease, and failed motion
+attempt neutralization. They cannot stop hardware across a broken network or
+after the Master is killed. The Controller needs its own watchdog for that.
+Heartbeat renewal alone does not detect a frozen joystick. These are bench-test
+tools, not a verified complete driving safety system.
 
-### Test-drive control sequence
-
-Acquire exclusive control and save the returned `lease_id`:
-
-```bash
-curl -X POST http://SERVER_WIREGUARD_IP:8000/api/v1/control/lease \
-  -H "Content-Type: application/json" \
-  -d '{"client_id":"manual-test-driver"}'
-```
-
-The driver must send `POST /api/v1/control/lease/heartbeat` with the
-`X-Control-Lease` header at least once every second. The default lease lasts two
-seconds, so a lost client is neutralized quickly. Send increasing motion
-sequence numbers through the same lease:
-
-```bash
-curl -X POST http://SERVER_WIREGUARD_IP:8000/api/v1/control/lease/heartbeat \
-  -H "X-Control-Lease: LEASE_ID"
-
-curl -X PUT http://SERVER_WIREGUARD_IP:8000/api/v1/control/motion \
-  -H "Content-Type: application/json" \
-  -H "X-Control-Lease: LEASE_ID" \
-  -d '{"steering":0.0,"throttle":0.15,"sequence":1,"client_sent_at":"2026-11-03T12:00:00Z"}'
-```
-
-Stop and release control explicitly when the test ends:
-
-```bash
-curl -X DELETE http://SERVER_WIREGUARD_IP:8000/api/v1/control/lease \
-  -H "X-Control-Lease: LEASE_ID"
-```
-
-`POST /api/v1/control/emergency-stop` is available without a lease so another
-client can request an immediate neutral command. Reset requires both downstream
-services to be healthy:
-
-```bash
-curl -X POST http://SERVER_WIREGUARD_IP:8000/api/v1/control/emergency-stop
-curl -X POST http://SERVER_WIREGUARD_IP:8000/api/v1/control/emergency-stop/reset
-```
-
-### Run the three containers together
-
-The included `compose.yaml` builds the existing sibling Controller and Video
-projects without modifying or tracking them. Keep this local layout:
-
-```text
-CC/
-+-- master-container/
-+-- controller-container/
-+-- video-container/
-```
-
-On the Raspberry Pi, start the stack from the Master project:
+## Local checks
 
 ```bash
 cd master-container
-docker compose up --build -d
-docker compose ps
-```
-
-The compose network resolves the services as `controller` and `video`. The
-Master API runs in HTTP mode and connects to their actual internal ports:
-Controller `8002` and Video `8001`. Only the Master API is published to the
-host, on port `8000`; downstream API ports stay inside the compose network.
-
-The default device mappings are `/dev/i2c-1` for the Controller and
-`/dev/video0` for Video. Override a host device without editing the compose
-file when necessary:
-
-```bash
-CC_I2C_DEVICE=/dev/i2c-0 CC_CAMERA_DEVICE=/dev/video2 docker compose up --build -d
-```
-
-Check the full path through the Master after the services start:
-
-```bash
-curl http://127.0.0.1:8000/api/v1/health/live
-curl http://127.0.0.1:8000/api/v1/health/ready
-curl http://127.0.0.1:8000/api/v1/video/status
-```
-
-`health/live` verifies the Master process. `health/ready` also calls both
-downstream containers and returns `503` when the Controller reports that its
-hardware is offline or either dependency cannot be reached.
-
-### Project layout
-
-The outer `master-container` folder is the container project, while the inner
-`master_api` folder is the importable Python package.
-
-```text
-CC/
-+-- master-container/       # Container project folder
-    +-- master_api/          # Python application package
-    |   +-- api/             # HTTP and WebSocket routes
-    |   +-- clients/         # Controller and Video integrations
-    |   +-- main.py          # FastAPI setup and startup/shutdown
-    |   +-- models.py        # Request and response data models
-    |   +-- state.py         # Safety-related system state
-    +-- tests/               # Automated tests
-    +-- Research/            # Design notes and interface drafts
-    +-- Dockerfile           # Container build instructions
-    +-- requirements.txt     # Python dependencies
-```
-
-### Downstream HTTP configuration
-
-The Controller and Video clients share one application-scoped asynchronous HTTP
-connection pool. The pool is created during application startup and closed during
-shutdown. Configure HTTP mode before starting Uvicorn:
-
-```powershell
-$env:MASTER_API_CLIENT_MODE = "http"
-$env:MASTER_API_CONTROLLER_BASE_URL = "http://controller:8002"
-$env:MASTER_API_VIDEO_BASE_URL = "http://video:8001"
-python -m uvicorn master_api.main:app --reload
-```
-
-All supported settings are environment variables:
-
-| Variable | Default |
-| --- | --- |
-| `MASTER_API_CLIENT_MODE` | `mock` |
-| `MASTER_API_CONTROLLER_BASE_URL` | `http://controller:8002` |
-| `MASTER_API_VIDEO_BASE_URL` | `http://video:8001` |
-| `MASTER_API_HTTP_CONNECT_TIMEOUT_SECONDS` | `0.5` |
-| `MASTER_API_HTTP_READ_TIMEOUT_SECONDS` | `0.5` |
-| `MASTER_API_HTTP_WRITE_TIMEOUT_SECONDS` | `0.5` |
-| `MASTER_API_HTTP_POOL_TIMEOUT_SECONDS` | `0.5` |
-| `MASTER_API_CONTROL_LEASE_SECONDS` | `2.0` |
-
-The Master API translates its small public contract to the APIs that already
-exist:
-
-| Master API behavior | Downstream request |
-| --- | --- |
-| Check Controller health or read telemetry | `GET /status` |
-| Apply steering | `POST /steer?deg=...` |
-| Apply positive or negative throttle | `POST /forward?delta=...` or `POST /backward?delta=...` |
-| Stop the motor | `POST /neutral` |
-| Read Video status | `GET /status` |
-| Start or stop video | `POST /stream/start` or `POST /stream/stop` |
-
-Public steering and throttle values remain normalized from `-1.0` to `1.0`.
-The adapter converts steering to `-45` through `45` degrees and throttle to the
-Controller's `0` through `350` microsecond delta. It also converts the
-Controller's lower-forward/higher-reverse PWM convention back to the public
-API's positive-forward convention when reporting telemetry. The repository
-intentionally tracks only `master-container/`; the sibling
-`controller-container/` and `video-container/` folders are ignored.
-
-Timeouts return `504 downstream_timeout`, connection failures return
-`503 downstream_unavailable`, and unsuccessful or invalid downstream responses
-return a stable `502` error. The public error body does not include downstream
-addresses, raw responses, or exception details.
-
-Run the endpoint tests with:
-
-```powershell
+python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
+python -m uvicorn master_api.main:app
 ```
 
-## Development approach
-
-Keep the implementation readable to an average computer science student. Clear,
-ordinary code is more important than using the fewest lines. As safety permits:
-
-- add behavior only when there is a current requirement or test for it;
-- keep HTTP routes thin and put shared rules in focused modules;
-- prefer the standard library and existing dependencies;
-- prefer basic control flow over clever or advanced language features;
-- introduce an abstraction only when it removes real duplication or isolates an
-  external system;
-- keep safety checks explicit, even when a shorter implementation is possible;
-- test public behavior and failure cases instead of implementation details; and
-- update this README when setup or behavior changes.
+Tests exercise API routes and HTTP adapters with simulated peers. They do not
+verify Raspberry Pi devices, WireGuard routing, or physical car movement.
