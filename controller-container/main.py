@@ -1,33 +1,25 @@
-from fastapi import FastAPI
-import movement
+from fastapi import FastAPI, Query
+from movement import CarController, PCA9685Driver
 
 app = FastAPI()
+car = CarController(PCA9685Driver())
 
 @app.get("/status")
-def status():
-  return movement.get_system_status()
-
-@app.post("/forward")
-def forward(delta: float = 100.0):
-  return movement.forward(delta)
-
-@app.post("/backward")
-def backward(delta: float = 100.0):
-  return movement.backward(delta)
-
-@app.post("/left")
-def left(deg: float = 25.0):
-  return movement.left(deg)
-
-@app.post("/right")
-def right(deg: float = 25.0):
-  return movement.right(deg)
+def get_status():
+  return car.status()
 
 @app.post("/steer")
-def steer(deg: float = 0.0):
-  return movement.set_angle(deg)
+def steer(deg: float = Query(0.0, ge=-45.0, le=45.0)):
+  return car.set_angle(deg)
+
+@app.post("/forward")
+def forward(delta: float = Query(100.0, ge=0.0)):
+  return car.forward(delta)
+
+@app.post("/backward")
+def backward(delta: float = Query(100.0, ge=0.0)):
+  return car.backward(delta)
 
 @app.post("/neutral")
 def neutral():
-  return movement.neutral()
-
+  return car.neutral()
