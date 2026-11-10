@@ -1,0 +1,25 @@
+import argparse
+import logging
+import controller
+import viewer
+
+
+def main() -> None:
+  parser = argparse.ArgumentParser(description="Driver station")
+  parser.add_argument("--no-view", action="store_true", help="run controller only")
+  args = parser.parse_args()
+
+  logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+
+  browser = None if args.no_view else viewer.open_stream()
+  try:
+    controller.run()
+  except KeyboardInterrupt:
+      pass
+  finally:
+      if browser:
+          browser.terminate()
+
+
+if __name__ == "__main__":
+    main()
