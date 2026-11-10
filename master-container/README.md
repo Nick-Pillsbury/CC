@@ -1,12 +1,60 @@
 # Master container
 
-The Master API receives requests on port 8000 and forwards them to the
-Controller and Video APIs. `GET /ping` returns `{"status":"ok"}`; it checks
-the Master process only, not the car.
+The Master API runs on port 8000 and sends steering, motor, and stream
+commands to the existing Controller and Video APIs. The Docker image uses
+real HTTP connections by default. No code changes are needed in those containers.
 
-## Deploy with your server's Compose file
+On startup, Master checks both services and enters `READY` when they respond.
+If either service starts later, requesting a control lease checks again.
+You do not need to call a health endpoint before driving.
+`GET /ping` returns `{"status":"ok"}`; it checks the Master process only.
 
-Your `/home/nick/compose.yaml` uses these connections:
+## Deploy and test on the Pi
+
+After uploading `master-api-pi.tar.gz` to `/home/nick`, back up the old files
+and extract inside the existing `CC` folder:
+
+```bash
+cd /home/nick/CC
+tar -czf "master-backup-$(date +%Y%m%d-%H%M%S).tar.gz" master-container &&
+tar -xzf /home/nick/master-api-pi.tar.gz
+python3 master-container/deploy.py
+```
+
+`deploy.py` finds the Compose file in the parent folder, builds only Master,
+runs the offline tests, and restarts only Master if those tests pass. It always
+includes `compose.server.yaml` so the Video host mapping is present. Finally it
+checks the live `/ping`, readiness, and telemetry endpoints without sending
+movement or stream commands. Controller and Video must already be running.
+A failed live check returns a nonzero exit code and leaves the updated Master
+running for diagnosis; it does not automatically roll back.
+
+For a Compose file elsewhere, pass `--compose /path/to/docker-compose.yml`.
+Its `master-api` build context must point to the uploaded `master-container`.
+The initial image build may need internet access to obtain Python and packages.
+
+To rerun the offline tests at any time after building the image:
+
+```bash
+python3 /home/nick/CC/master-container/offline_test.py --docker
+```
+
+This uses the existing `master-api-image:latest` image for dependencies and
+tests the uploaded source with simulated Controller and Video services. It
+does not pull images, publish ports, access devices, or contact the running
+stack. Docker networking is disabled. Use `--image IMAGE_NAME` if your image
+has a different name. Keep `tests/`, `offline_test.py`, and `deploy.py` on the Pi
+to use these scripts.
+
+On a computer where `requirements.txt` is already installed, you can also run
+`python offline_test.py` from `master-container`. Tests cover motion forwarding,
+leases, expiry, emergency stop, video commands, telemetry, startup recovery,
+and deployment command scope. A passing offline test does not prove physical
+movement, camera output, or Pi networking.
+
+## Server connections
+
+Your `/home/nick/CC/docker-compose.yml` uses these connections:
 
 | Service | How the Master reaches it |
 | --- | --- |
@@ -14,14 +62,14 @@ Your `/home/nick/compose.yaml` uses these connections:
 | Video (`video-api`, host networking) | Host gateway, `http://host.docker.internal:8001` |
 | Master (`master-api`) | Published port `8000` |
 
-Copy the updated `master-container` folder to `/home/nick/master-container`.
+Copy the updated `master-container` folder to `/home/nick/CC/master-container`.
 The included override supplies HTTP mode, the two URLs, and the host gateway
 mapping. Use it with the server's existing Compose file:
 
 ```bash
-cd /home/nick
-docker compose -f compose.yaml -f master-container/compose.server.yaml up -d --build --no-deps master-api
-docker compose logs --tail=50 master-api
+cd /home/nick/CC
+docker compose -f docker-compose.yml -f master-container/compose.server.yaml up -d --build --no-deps --wait master-api
+docker compose -f docker-compose.yml logs --tail=50 master-api
 curl http://127.0.0.1:8000/ping
 curl http://127.0.0.1:8000/api/v1/health/ready
 ```
@@ -39,7 +87,7 @@ three-container Compose file has been removed in favor of your server stack.
 Run these on the server, one at a time, with the drive wheels raised initially:
 
 ```bash
-cd /home/nick/master-container
+cd /home/nick/CC/master-container
 python3 drive_test.py ping
 python3 drive_test.py left
 python3 drive_test.py right
@@ -78,7 +126,7 @@ Open `http://SERVER_WIREGUARD_IP:8000/docs` for request schemas.
 | Master endpoint | Behavior |
 | --- | --- |
 | `GET /ping` | Master reachability |
-| `GET /api/v1/health/ready` | Calls both downstream `/status` routes; healthy checks enable `READY` state |
+| `GET /api/v1/health/ready` | Checks both services; returns `503` with component details when unavailable |
 | `POST /api/v1/control/lease` | Takes `{"client_id":"driver"}` and grants one driver control |
 | `POST /api/v1/control/lease/heartbeat` | Renews control using `X-Control-Lease` |
 | `PUT /api/v1/control/motion` | Requires lease; sends Controller `/steer` and `/forward`, `/backward`, or `/neutral` |
@@ -93,8 +141,8 @@ Open `http://SERVER_WIREGUARD_IP:8000/docs` for request schemas.
 For frontend integration, motion contains `steering` and `throttle` in [-1, 1],
 an increasing `sequence`, and a `client_sent_at` timestamp. Renew the lease
 every 0.5 seconds during driving; motion itself does not renew it. The default
-lease expires after two seconds. The readiness call currently precedes lease
-acquisition; the tester handles that automatically.
+lease expires after two seconds. Startup and lease acquisition handle readiness
+automatically; the tester also checks readiness to report connection problems.
 
 Read the implementation in this order:
 
@@ -105,8 +153,9 @@ Read the implementation in this order:
 
 ## Configuration and limits
 
-Without `MASTER_API_CLIENT_MODE=http`, the app uses mocks and never contacts
-the car. `compose.server.yaml` explicitly enables HTTP mode. The optional
+The Docker image and `compose.server.yaml` enable HTTP mode. Running Python
+directly defaults to mocks unless `MASTER_API_CLIENT_MODE=http` is set.
+Set `MASTER_API_CLIENT_MODE=mock` explicitly to use mocks in Docker. The optional
 `server.env.example` lists the connection settings, but is not loaded automatically.
 
 Controller HTTP deadlines default to 0.5 seconds per phase. Video start/stop

@@ -1,6 +1,5 @@
-# Optional override for the existing /home/nick/compose.yaml.
-# Run from /home/nick:
-# docker compose -f compose.yaml -f master-container/compose.server.yaml up -d --build --no-deps master-api
+# Master connection settings for /home/nick/CC/docker-compose.yml.
+# deploy.py always includes this override so the Video host mapping is retained.
 services:
   master-api:
     environment:
