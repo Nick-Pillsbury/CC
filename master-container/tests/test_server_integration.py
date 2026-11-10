@@ -57,6 +57,7 @@ class ServerIntegrationTests(unittest.TestCase):
         )
         self.enterContext(patch("master_api.main.httpx.AsyncClient", side_effect=factory))
         self.client = self.enterContext(TestClient(create_app(settings=settings)))
+        self.requests.clear()  # Startup checks are separate from each operation.
 
     def acquire(self):
         self.assertEqual(200, self.client.get("/api/v1/health/ready").status_code)
@@ -81,6 +82,12 @@ class ServerIntegrationTests(unittest.TestCase):
         self.assertTrue(all(r.url.port == 8002 for r in posts))
         self.assertEqual(0.5, posts[1].extensions["timeout"]["read"])
 
+    def test_startup_allows_control_without_a_readiness_request(self):
+        state = self.client.get("/api/v1/system/state").json()
+        self.assertEqual("READY", state["system_state"])
+        response = self.client.post("/api/v1/control/lease", json={"client_id": "driver"})
+        self.assertEqual(201, response.status_code)
+
     def test_public_video_commands_reach_host_with_sufficient_timeout(self):
         self.assertEqual({"stream": "running"}, self.client.post("/api/v1/video/stream/start").json())
         self.assertEqual({"stream": "stopped"}, self.client.post("/api/v1/video/stream/stop").json())
@@ -95,3 +102,36 @@ class ServerIntegrationTests(unittest.TestCase):
         state = self.client.get("/api/v1/system/state").json()
         self.assertEqual("EMERGENCY_STOP", state["system_state"])
         self.assertEqual(409, self.client.post("/api/v1/control/lease/heartbeat", headers=headers).status_code)
+
+    def test_dependency_can_start_after_master(self):
+        available = False
+
+        def downstream(request):
+            if request.url.host == "controller.test":
+                if not available:
+                    raise httpx.ConnectError("not started yet", request=request)
+                if request.url.path == "/neutral":
+                    return httpx.Response(200, json={"status": "neutral"})
+                return httpx.Response(200, json={
+                    "hardware_online": True, "state": {"motor_us": 1550, "angle_deg": 0},
+                })
+            return httpx.Response(200, json={"stream": "stopped"})
+
+        # The outer fixture has patched the constructor; use the actual class
+        # behind its existing client to build this independent runtime.
+        real_client = type(self.client.app.state.services.hardware._http_client)
+        factory = lambda **kwargs: real_client(transport=httpx.MockTransport(downstream), **kwargs)
+        settings = Settings(client_mode="http", controller_base_url="http://controller.test",
+                            video_base_url="http://video.test")
+        with patch("master_api.main.httpx.AsyncClient", side_effect=factory):
+            with TestClient(create_app(settings=settings)) as client:
+                self.assertEqual(200, client.get("/ping").status_code)
+                readiness = client.get("/api/v1/health/ready")
+                self.assertEqual(503, readiness.status_code)
+                self.assertFalse(readiness.json()["checks"]["hardware"]["ready"])
+                self.assertTrue(readiness.json()["checks"]["video"]["ready"])
+                self.assertEqual(409, client.post("/api/v1/control/lease",
+                                                 json={"client_id": "driver"}).status_code)
+                available = True
+                self.assertEqual(201, client.post("/api/v1/control/lease",
+                                                 json={"client_id": "driver"}).status_code)

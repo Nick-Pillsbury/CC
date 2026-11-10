@@ -11,6 +11,7 @@ from master_api.models import (
     ControlLeaseResponse,
     MotionCommand,
     MotionResponse,
+    SystemState,
     SystemStatus,
 )
 from master_api.state import StateConflictError
@@ -29,6 +30,10 @@ async def acquire_control(
     services: Services,
 ) -> ControlLeaseResponse:
     """Atomically grant exclusive, short-lived driving control."""
+    if services.state_machine.snapshot().system_state in {
+        SystemState.STARTING, SystemState.DEGRADED,
+    }:
+        await services.check_readiness()
     return await services.lease_manager.acquire(request.client_id)
 
 

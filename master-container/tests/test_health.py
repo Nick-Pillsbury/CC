@@ -35,6 +35,24 @@ class HealthEndpointTests(ApiTestCase):
         self.assertFalse(response.json()["ready"])
         self.assertEqual("DEGRADED", response.json()["system_state"])
 
+    def test_dependency_failure_revokes_control_and_stops_motion(self) -> None:
+        for component in (self.hardware, self.video):
+            with self.subTest(component=type(component).__name__):
+                lease = self.client.post("/api/v1/control/lease", json={"client_id": "driver"})
+                headers = {"X-Control-Lease": lease.json()["lease_id"]}
+                self.hardware.throttle = 0.5
+                component.ready = False
+                response = self.client.get("/api/v1/health/ready")
+                self.assertEqual(503, response.status_code)
+                self.assertEqual("EMERGENCY_STOP", response.json()["system_state"])
+                self.assertEqual(0, self.hardware.throttle)
+                self.assertEqual(409, self.client.post("/api/v1/control/lease/heartbeat",
+                                                       headers=headers).status_code)
+                component.ready = True
+                self.client.get("/api/v1/health/ready")
+                self.assertEqual("EMERGENCY_STOP", self.client.get("/api/v1/system/state").json()["system_state"])
+                self.assertEqual(200, self.client.post("/api/v1/control/emergency-stop/reset").status_code)
+
     def test_openapi_lists_skeleton_routes(self) -> None:
         paths = self.client.get("/openapi.json").json()["paths"]
 

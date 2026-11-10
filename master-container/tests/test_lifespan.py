@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import patch
 
+import httpx
 from fastapi.testclient import TestClient
 
 from master_api.clients.http import HttpHardwareClient, HttpVideoClient
@@ -27,6 +28,13 @@ class LifespanTests(unittest.TestCase):
 
             async def __aexit__(self, *args: object) -> None:
                 self.closed = True
+
+            async def request(self, method: str, url: str, **kwargs: object) -> httpx.Response:
+                body = (
+                    {"hardware_online": True, "state": {"motor_us": 1550, "angle_deg": 0}}
+                    if "controller.test" in url else {"stream": "stopped"}
+                )
+                return httpx.Response(200, json=body)
 
         settings = Settings(
             client_mode="http",

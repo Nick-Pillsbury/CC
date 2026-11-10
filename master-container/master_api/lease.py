@@ -11,6 +11,7 @@ from master_api.models import (
     MotionCommand,
     MotionResponse,
     SystemState,
+    SystemStatus,
     utc_now,
 )
 from master_api.state import StateConflictError, SystemStateMachine
@@ -92,6 +93,26 @@ class ControlLeaseManager:
             self._active = lease
             self._last_sequence = None
             return lease.model_copy()
+
+    async def reconcile_health(
+        self, *, hardware_ready: bool, video_ready: bool,
+    ) -> SystemStatus:
+        """Keep health-driven state changes serialized with control commands."""
+        async with self._lock:
+            if self._active is not None and not (hardware_ready and video_ready):
+                self._active = None
+                self._last_sequence = None
+                await self._state_machine.transition(
+                    SystemState.EMERGENCY_STOP,
+                    "Required service unavailable while driving",
+                )
+                try:
+                    await self._hardware.stop()
+                except DownstreamError:
+                    pass  # Keep the stop latched when neutral cannot be confirmed.
+            return await self._state_machine.reconcile_health(
+                hardware_ready=hardware_ready, video_ready=video_ready,
+            )
 
     async def heartbeat(self, lease_id: str) -> ControlLeaseResponse:
         async with self._lock:

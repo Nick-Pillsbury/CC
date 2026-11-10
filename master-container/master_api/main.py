@@ -55,6 +55,7 @@ def create_app(
             runtime_services = application.state.services
             await runtime_services.lease_manager.start()
             try:
+                await runtime_services.check_readiness()
                 yield
             finally:
                 try:
@@ -84,6 +85,7 @@ def create_app(
             runtime_services = application.state.services
             await runtime_services.lease_manager.start()
             try:
+                await runtime_services.check_readiness()
                 yield
             finally:
                 try:
