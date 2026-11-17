@@ -9,11 +9,13 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from master_api.api import control, health, system, telemetry, video
+from master_api.audit import AuditMiddleware
 from master_api.clients.errors import DownstreamError
 from master_api.clients.http import HttpHardwareClient, HttpVideoClient
 from master_api.clients.mock import MockHardwareClient, MockVideoClient
 from master_api.config import Settings
 from master_api.dependencies import ServiceContainer
+from master_api.journal import Journal
 from master_api.lease import ControlLeaseError
 from master_api.models import PingResponse, SystemState
 from master_api.state import StateConflictError
@@ -26,52 +28,61 @@ def create_app(
     """Create an application with replaceable downstream service clients."""
 
     @asynccontextmanager
+    async def run_services(application: FastAPI, current: ServiceContainer,
+                           *, owned: bool) -> AsyncIterator[None]:
+        application.state.services = current
+        await current.lease_manager.start()
+        try:
+            if owned:
+                await current.check_readiness()
+                await current.start_monitoring()
+            yield
+        finally:
+            try:
+                # Stop monitoring before neutralizing to prevent a late health transition.
+                try:
+                    await current.stop_monitoring()
+                finally:
+                    await current.lease_manager.shutdown()
+            finally:
+                await current.state_machine.transition(
+                    SystemState.SHUTTING_DOWN, "Application shutdown started",
+                )
+                await current.journal.flush()
+                if owned:
+                    await current.journal.close()
+
+    @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         # Tests can provide their own clients instead of creating runtime clients.
         if services is not None:
-            application.state.services = services
-            await services.lease_manager.start()
-            try:
+            async with run_services(application, services, owned=False):
                 yield
-            finally:
-                try:
-                    await services.lease_manager.shutdown()
-                finally:
-                    await services.state_machine.transition(
-                        target=SystemState.SHUTTING_DOWN,
-                        reason="Application shutdown started",
-                    )
             return
 
         runtime_settings = settings or Settings.from_env()
+        common = dict(
+            lease_duration_seconds=runtime_settings.control_lease_seconds,
+            monitor_interval_seconds=runtime_settings.monitor_interval_seconds,
+            journal=Journal(runtime_settings.history_path, runtime_settings.history_limit),
+        )
 
         # Mock mode lets students run the API without car hardware.
         if runtime_settings.client_mode == "mock":
-            application.state.services = ServiceContainer(
+            runtime_services = ServiceContainer(
                 hardware=MockHardwareClient(),
                 video=MockVideoClient(),
-                lease_duration_seconds=runtime_settings.control_lease_seconds,
+                **common,
             )
-            runtime_services = application.state.services
-            await runtime_services.lease_manager.start()
-            try:
-                await runtime_services.check_readiness()
+            async with run_services(application, runtime_services, owned=True):
                 yield
-            finally:
-                try:
-                    await runtime_services.lease_manager.shutdown()
-                finally:
-                    await runtime_services.state_machine.transition(
-                        target=SystemState.SHUTTING_DOWN,
-                        reason="Application shutdown started",
-                    )
             return
 
         # HTTP mode shares one client between the hardware and video services.
         async with httpx.AsyncClient(
             timeout=runtime_settings.http_timeout()
         ) as http_client:
-            application.state.services = ServiceContainer(
+            runtime_services = ServiceContainer(
                 hardware=HttpHardwareClient(
                     http_client,
                     runtime_settings.controller_base_url,
@@ -80,28 +91,18 @@ def create_app(
                     http_client,
                     runtime_settings.video_base_url,
                 ),
-                lease_duration_seconds=runtime_settings.control_lease_seconds,
+                **common,
             )
-            runtime_services = application.state.services
-            await runtime_services.lease_manager.start()
-            try:
-                await runtime_services.check_readiness()
+            async with run_services(application, runtime_services, owned=True):
                 yield
-            finally:
-                try:
-                    await runtime_services.lease_manager.shutdown()
-                finally:
-                    await runtime_services.state_machine.transition(
-                        target=SystemState.SHUTTING_DOWN,
-                        reason="Application shutdown started",
-                    )
 
     app = FastAPI(
         title="CC Master API",
-        version="0.1.0",
+        version="0.2.0",
         description="Central API for car control, video, telemetry, and health.",
         lifespan=lifespan,
     )
+    app.add_middleware(AuditMiddleware)
     if services is not None:
         # Keep explicitly injected services usable by TestClient without requiring
         # lifespan startup. The application still never owns or closes them.
@@ -112,7 +113,10 @@ def create_app(
         request: Request,
         exc: DownstreamError,
     ) -> JSONResponse:
-        del request
+        await request.app.state.services.journal.record(
+            "downstream_error", code=exc.code, component=exc.component,
+            request_id=request.state.request_id,
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -130,7 +134,10 @@ def create_app(
         request: Request,
         exc: StateConflictError,
     ) -> JSONResponse:
-        del request
+        await request.app.state.services.journal.record(
+            "state_conflict", state=exc.current_state.value,
+            request_id=request.state.request_id,
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -148,7 +155,9 @@ def create_app(
         request: Request,
         exc: ControlLeaseError,
     ) -> JSONResponse:
-        del request
+        await request.app.state.services.journal.record(
+            "control_rejected", code=exc.code, request_id=request.state.request_id,
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content={

@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from enum import Enum
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -96,7 +97,26 @@ class HardwareTelemetry(BaseModel):
     sampled_at: datetime
 
 
+class RecordingRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: UUID
+
+
+class RecordingStatus(BaseModel):
+    state: str = Field(pattern="^(idle|recording|stopped|failed|unsupported|unavailable)$")
+    recording_id: UUID | None = None
+    started_at: datetime | None = None
+    stopped_at: datetime | None = None
+    detail: str | None = None
+
+
 class TelemetrySnapshot(BaseModel):
-    hardware: HardwareTelemetry
-    video: VideoStatus
+    hardware: HardwareTelemetry | None
+    video: VideoStatus | None
     collected_at: datetime
+    recording: RecordingStatus | None = None
+    stale_components: list[str] = Field(default_factory=list)
+    errors: dict[str, str] = Field(default_factory=dict)
+    observed_at: dict[str, datetime] = Field(default_factory=dict)
+    system_state: SystemState = SystemState.STARTING

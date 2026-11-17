@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from master_api.models import SystemState, SystemStatus, utc_now
+from master_api.journal import Journal
 
 
 class StateConflictError(Exception):
@@ -60,6 +61,7 @@ class SystemStateMachine:
         self._changed_at = utc_now()
         self._lock = asyncio.Lock()
         self._subscribers: set[asyncio.Queue[SystemStatus]] = set()
+        self.journal: Journal | None = None
 
     def snapshot(self) -> SystemStatus:
         """Return an immutable view of the latest committed state."""
@@ -147,10 +149,14 @@ class SystemStateMachine:
                 f"Cannot transition from {self._state.value} to {target.value}.",
             )
 
+        previous = self._state
         self._state = target
         self._reason = reason
         self._changed_at = utc_now()
         state = self.snapshot()
+        if self.journal is not None:
+            self.journal.enqueue("state_transition", previous=previous.value,
+                                 current=target.value, reason=reason)
         for updates in self._subscribers:
             if updates.full():
                 updates.get_nowait()

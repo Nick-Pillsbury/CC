@@ -1,12 +1,14 @@
 """Interfaces for hardware and video container clients."""
 
 from typing import Protocol
+from uuid import UUID
 
 from master_api.models import (
     ComponentHealth,
     HardwareTelemetry,
     MotionCommand,
     MotionResponse,
+    RecordingStatus,
     VideoStatus,
 )
 
@@ -29,3 +31,9 @@ class VideoClient(Protocol):
     async def stop_stream(self) -> VideoStatus: ...
 
     async def status(self) -> VideoStatus: ...
+
+    async def recording_status(self) -> RecordingStatus: ...
+
+    async def start_recording(self, request_id: UUID) -> RecordingStatus: ...
+
+    async def stop_recording(self, recording_id: UUID) -> RecordingStatus: ...

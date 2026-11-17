@@ -35,3 +35,13 @@ class DownstreamHttpError(DownstreamError):
     code = "downstream_http_error"
     status_code = 502
     retryable = True
+
+
+class RecordingUnsupportedError(DownstreamError):
+    code = "recording_not_supported"
+    status_code = 501
+
+
+class RecordingConflictError(DownstreamError):
+    code = "recording_conflict"
+    status_code = 409

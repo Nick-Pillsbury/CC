@@ -56,3 +56,13 @@ class SettingsTests(unittest.TestCase):
             Settings.from_env(
                 {"MASTER_API_CONTROLLER_BASE_URL": "controller.internal:8000"}
             )
+
+    def test_monitor_interval_rejects_nonfinite_values(self):
+        for value in ("nan", "inf", "-1", "0"):
+            with self.subTest(value=value), self.assertRaises(ConfigurationError):
+                Settings.from_env({"MASTER_API_MONITOR_INTERVAL_SECONDS": value})
+
+    def test_history_limit_is_bounded(self):
+        for value in ("0", "1000001", "not-a-number", "1.5"):
+            with self.subTest(value=value), self.assertRaises(ConfigurationError):
+                Settings.from_env({"MASTER_API_HISTORY_LIMIT": value})

@@ -1,15 +1,19 @@
 """Asynchronous HTTP clients for hardware and video containers."""
 
 from typing import Literal, TypeVar
+from uuid import UUID
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
 from master_api.clients.errors import (
+    DownstreamError,
     DownstreamHttpError,
     DownstreamResponseError,
     DownstreamTimeoutError,
     DownstreamUnavailableError,
+    RecordingUnsupportedError,
+    RecordingConflictError,
 )
 from master_api.models import (
     ComponentHealth,
@@ -17,6 +21,7 @@ from master_api.models import (
     HardwareTelemetry,
     MotionCommand,
     MotionResponse,
+    RecordingStatus,
     StreamState,
     VideoStatus,
     utc_now,
@@ -86,6 +91,12 @@ class _HttpDownstreamClient:
                 f"The {self._component} service is unavailable.",
             ) from exc
 
+        if path.startswith("/recordings") and response.status_code in {404, 405, 501}:
+            raise RecordingUnsupportedError(
+                "video", "The Video API does not support this recording operation. Update the Video service recording contract.",
+            )
+        if path.startswith("/recordings") and response.status_code == 409:
+            raise RecordingConflictError("video", "The recording operation conflicts with Video service state.")
         if response.is_error:
             raise DownstreamHttpError(
                 self._component,
@@ -212,3 +223,36 @@ class HttpVideoClient(_HttpDownstreamClient):
 
     async def status(self) -> VideoStatus:
         return await self._request("GET", "/status", VideoStatus)
+
+    async def recording_status(self) -> RecordingStatus:
+        try:
+            return await self._request("GET", "/recordings/current", RecordingStatus)
+        except RecordingUnsupportedError:
+            return RecordingStatus(state="unsupported", detail="Video API recording support is not installed")
+
+    async def start_recording(self, request_id: UUID) -> RecordingStatus:
+        return await self._recording_command("POST", "/recordings", request_id,
+                                             json={"request_id": str(request_id)})
+
+    async def stop_recording(self, recording_id: UUID) -> RecordingStatus:
+        return await self._recording_command("DELETE", f"/recordings/{recording_id}", recording_id)
+
+    async def _recording_command(self, method: str, path: str, operation_id: UUID,
+                                 **kwargs: object) -> RecordingStatus:
+        timeout = httpx.Timeout(self._http_client.timeout)
+        timeout.read = 8.0
+        try:
+            result = await self._request(method, path, RecordingStatus, timeout=timeout, **kwargs)
+        except DownstreamTimeoutError as original:
+            # Never replay an ambiguous mutation. Ask Video whether it committed.
+            try:
+                result = await self.recording_status()
+            except DownstreamError:
+                raise original
+            expected = {"recording", "stopped"} if method == "POST" else {"stopped"}
+            if result.recording_id != operation_id or result.state not in expected:
+                raise original
+        expected = {"recording", "stopped"} if method == "POST" else {"stopped"}
+        if result.recording_id != operation_id or result.state not in expected:
+            raise DownstreamResponseError("video", "Video returned an inconsistent recording acknowledgement.")
+        return result

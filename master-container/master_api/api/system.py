@@ -1,11 +1,23 @@
 """System-state inspection routes."""
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from master_api.dependencies import Services
 from master_api.models import SystemStatus
 
 router = APIRouter(prefix="/system", tags=["system"])
+
+
+@router.get("/events")
+async def events(services: Services, after: int = Query(0, ge=0),
+                  limit: int = Query(100, ge=1, le=1000)) -> dict:
+    items = await services.journal.read("event", after, limit)
+    return {"items": items, "next_after": items[-1]["id"] if items else after}
+
+
+@router.get("/monitoring")
+async def monitoring(services: Services) -> dict:
+    return services.monitoring_status()
 
 
 @router.get("/state", response_model=SystemStatus)

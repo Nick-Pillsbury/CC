@@ -122,6 +122,13 @@ class ControlLeaseManager:
             self._active = lease
             return lease.model_copy()
 
+    async def authorize(self, lease_id: str) -> None:
+        """Check ownership at request acceptance without holding up motion for video IO."""
+        async with self._lock:
+            await self._expire_if_needed_locked()
+            self._require_active_locked(lease_id)
+            await self._state_machine.require_motion_allowed()
+
     async def apply_motion(
         self,
         lease_id: str,

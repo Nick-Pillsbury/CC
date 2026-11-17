@@ -1,6 +1,7 @@
 """Validated runtime configuration for downstream service clients."""
 
 from dataclasses import dataclass
+import math
 from os import environ
 from typing import Mapping
 from urllib.parse import urlsplit
@@ -18,7 +19,7 @@ def _positive_float(values: Mapping[str, str], name: str, default: float) -> flo
         value = float(raw_value)
     except ValueError as exc:
         raise ConfigurationError(f"{name} must be a number") from exc
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         raise ConfigurationError(f"{name} must be greater than zero")
     return value
 
@@ -45,6 +46,9 @@ class Settings:
     write_timeout_seconds: float = 0.5
     pool_timeout_seconds: float = 0.5
     control_lease_seconds: float = 2.0
+    monitor_interval_seconds: float = 1.0
+    history_path: str = ":memory:"
+    history_limit: int = 10000
 
     @classmethod
     def from_env(cls, values: Mapping[str, str] | None = None) -> "Settings":
@@ -55,7 +59,17 @@ class Settings:
                 "MASTER_API_CLIENT_MODE must be either 'mock' or 'http'"
             )
 
+        try:
+            history_limit = int(source.get("MASTER_API_HISTORY_LIMIT", "10000"))
+        except ValueError as exc:
+            raise ConfigurationError("MASTER_API_HISTORY_LIMIT must be a positive integer") from exc
+        if not 1 <= history_limit <= 1000000:
+            raise ConfigurationError("MASTER_API_HISTORY_LIMIT must be between 1 and 1000000")
+
         return cls(
+            monitor_interval_seconds=_positive_float(source, "MASTER_API_MONITOR_INTERVAL_SECONDS", 1.0),
+            history_path=source.get("MASTER_API_HISTORY_PATH", ":memory:"),
+            history_limit=history_limit,
             client_mode=mode,
             controller_base_url=_http_base_url(
                 source,
