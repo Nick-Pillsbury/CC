@@ -9,24 +9,7 @@ import sys
 from offline_test import docker_command
 
 
-LIVE_CHECK = """
-import json
-import sys
-from urllib.error import HTTPError
-from urllib.request import urlopen
-
-for path in ('/ping', '/api/v1/health/ready', '/api/v1/telemetry'):
-    print(path, flush=True)
-    try:
-        with urlopen('http://127.0.0.1:8000' + path, timeout=10) as response:
-            body = json.load(response)
-    except HTTPError as exc:
-        print(exc.read().decode(errors='replace'))
-        sys.exit(1)
-    print(json.dumps(body, indent=2), flush=True)
-    if path.endswith('/ready') and not body.get('ready'):
-        sys.exit(1)
-"""
+LIVE_CHECK = Path(__file__).with_name("live_test.py").read_text(encoding="utf-8")
 
 
 def find_compose(project: Path) -> Path:

@@ -6,5 +6,13 @@ services:
       MASTER_API_CLIENT_MODE: http
       MASTER_API_CONTROLLER_BASE_URL: http://controller-api:8002
       MASTER_API_VIDEO_BASE_URL: http://host.docker.internal:8001
+      MASTER_API_HISTORY_PATH: /data/master-history.sqlite3
+      MASTER_API_MONITOR_INTERVAL_SECONDS: "1"
+      MASTER_API_HISTORY_LIMIT: "10000"
+    volumes:
+      - master-history:/data
     extra_hosts:
       - "host.docker.internal:host-gateway"
+
+volumes:
+  master-history:

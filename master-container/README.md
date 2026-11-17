@@ -5,6 +5,9 @@ commands to the existing Controller and Video APIs. The Docker image uses
 real HTTP connections by default. No code changes are needed in those containers.
 
 On startup, Master checks both services and enters `READY` when they respond.
+It also checks them every second while running. If either becomes unavailable
+during a driving lease, Master revokes control, latches emergency stop, and
+attempts neutralization.
 If either service starts later, requesting a control lease checks again.
 You do not need to call a health endpoint before driving.
 `GET /ping` returns `{"status":"ok"}`; it checks the Master process only.
@@ -26,6 +29,7 @@ runs the offline tests, and restarts only Master if those tests pass. It always
 includes `compose.server.yaml` so the Video host mapping is present. Finally it
 checks the live `/ping`, readiness, and telemetry endpoints without sending
 movement or stream commands. Controller and Video must already be running.
+Live checks also verify background monitoring and saved event/telemetry history.
 A failed live check returns a nonzero exit code and leaves the updated Master
 running for diagnosis; it does not automatically roll back.
 
@@ -137,6 +141,13 @@ Open `http://SERVER_WIREGUARD_IP:8000/docs` for request schemas.
 | `POST /api/v1/video/stream/start` | Calls Video `/stream/start` |
 | `POST /api/v1/video/stream/stop` | Calls Video `/stream/stop` |
 | `GET /api/v1/telemetry` | Combines controller state and video status |
+| `GET /api/v1/telemetry/history` | Saved telemetry samples |
+| `WS /api/v1/telemetry/ws` | Live samples for spectators |
+| `GET /api/v1/system/events` | Saved request outcomes, errors, and state changes |
+| `GET /api/v1/system/monitoring` | Background polling status and latest dependency checks |
+| `GET /api/v1/video/recordings/current` | Recording status or `unsupported` for the current Video API |
+| `POST /api/v1/video/recordings` | Requires lease and a UUID `request_id`; forwards a recording start |
+| `DELETE /api/v1/video/recordings/{recording_id}` | Requires lease; stops that recording only |
 
 For frontend integration, motion contains `steering` and `throttle` in [-1, 1],
 an increasing `sequence`, and a `client_sent_at` timestamp. Renew the lease
@@ -150,6 +161,63 @@ Read the implementation in this order:
 2. `master_api/api/control.py` and `api/video.py`: public endpoints.
 3. `master_api/clients/http.py`: actual outgoing HTTP requests.
 4. `master_api/lease.py`: ownership, sequence checks, and stop requests.
+5. `master_api/dependencies.py` and `journal.py`: background monitoring and history.
+
+## History and live telemetry
+
+The deployment override mounts a Docker volume at `/data`. Master saves events
+and telemetry in `/data/master-history.sqlite3`, retaining the newest 10,000 of
+each. The volume survives a Master restart or rebuild. Direct Python runs use
+in-memory history unless `MASTER_API_HISTORY_PATH` is set.
+
+Events include state transitions, dependency changes, request outcomes, and
+downstream errors. Request bodies, query strings, lease tokens, and authorization
+headers are not stored. Responses include `X-Request-ID` to find the corresponding
+request event. History endpoints accept `after` (the last returned row ID) and
+`limit` (1–1000); use `next_after` for the next page. Rows are oldest first.
+
+Telemetry is sampled every second and pushed to WebSocket viewers. Slow viewers
+receive the latest sample. When a component fails, its previous value is retained
+and listed in `stale_components`; `observed_at` keeps the last successful fetch
+time. With no previous sample the value is null. These timestamps describe Master
+fetches, not sensor sampling times. Clients must check the stale flags. A snapshot
+can return HTTP 200 with stale data; readiness still returns 503 on dependency failure.
+
+Configure the polling interval with `MASTER_API_MONITOR_INTERVAL_SECONDS` and
+retention with `MASTER_API_HISTORY_LIMIT`. Monitoring reports disk-write failures
+without preventing a stop request.
+
+## Recording integration
+
+The current Video service only supports streaming. Master now has recording
+routes, but actual recording requires its owner to implement the contract in
+[VIDEO_RECORDING_CONTRACT.md](VIDEO_RECORDING_CONTRACT.md). Until then, recording
+status is `unsupported` and recording mutations return HTTP 501. No Controller
+or Video changes are included in this Master update.
+
+Use the active `X-Control-Lease` for recording mutations. Send a fresh UUID as
+`request_id` when starting; reuse it when retrying the same request. Stop using
+the returned `recording_id`. After an ambiguous timeout, Master checks recording
+status once instead of blindly repeating the command. Idempotency and persistent
+video files are the Video service's responsibility.
+
+## Read-only live checks
+
+After deployment, run on the Pi:
+
+```bash
+python3 /home/nick/CC/master-container/live_test.py
+```
+
+Or from this computer:
+
+```powershell
+python .\master-container\live_test.py --url http://10.0.0.51:8000
+```
+
+This checks health, monitoring, telemetry, history, and recording capability.
+It sends no movement or video commands. Offline tests exercise recording against
+simulated services; an `unsupported` live result does not verify real recording.
 
 ## Configuration and limits
 
