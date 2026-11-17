@@ -197,6 +197,10 @@ def run(client: ApiClient | None = None, read_pad=read_xinput) -> None:
     connected = None
     log.info("Controller relay running. Car: %s  Video: %s", CAR_API_URL, VIDEO_API_URL)
     try:
+        client.send(Command("video", "/stream/start"))
+    except OSError as exc:
+        log.warning("Could not start stream on launch: %s", exc)
+    try:
         while True:
             pad = read_pad()
             if pad.connected != connected:
