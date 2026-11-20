@@ -215,12 +215,31 @@ An external USB 3.0 thumb drive is used because:
 ### Project layout
 
 ```
-Video/
+Video_Container/
 ├── Dockerfile
-├── docker-compose.yml
 ├── mediamtx.yml
-├── requirements.txt
-└── main.py
+├── reqs.txt            # runtime dependencies (pinned)
+├── pytest.ini
+├── app/                # everything here is copied into the image
+│   ├── main.py         # HTTP API (routes only)
+│   ├── stream.py       # FFmpeg process management
+│   ├── models.py       # API response models
+│   └── config.py       # settings from environment variables
+└── tests/
+    ├── test_offline.py     # no hardware needed, FFmpeg is faked
+    └── test_deployment.py  # runs against the live containers
+```
+
+### Tests
+
+```bash
+pip install -r reqs.txt pytest httpx
+
+# Offline: runs anywhere
+pytest tests/test_offline.py
+
+# Deployment: hits the running containers (starts the real stream, then restores its previous state)
+VIDEO_API_URL=http://10.0.0.51:8001 MEDIAMTX_URL=http://10.0.0.51:8889 pytest tests/test_deployment.py
 ```
 
 ### Services
