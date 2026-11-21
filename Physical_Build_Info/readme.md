@@ -21,7 +21,6 @@ For the overall project vision, software containers, and milestones, see the [Pr
 9. [Safety & Operating Rules](#9-safety--operating-rules)
 10. [Troubleshooting](#10-troubleshooting)
 11. [Build Photos](#11-build-photos)
-12. [Open Items](#12-open-items)
 
 ---
 

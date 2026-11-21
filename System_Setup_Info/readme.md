@@ -14,6 +14,7 @@ For the hardware build (parts, wiring, power), see the [Physical Build Documenta
    - [2.2 First Boot](#22-first-boot)
    - [2.3 Enable I2C](#23-enable-i2c)
    - [2.4 Install WireGuard](#24-install-wireguard)
+   - [2.5 Install Docker](#25-install-docker)
 3. [Solis Tag Setup](#3-solis-tag-setup)
 4. [WireGuard VPS](#4-wireguard-vps)
    - [4.1 Why a VPS Is Needed](#41-why-a-vps-is-needed)
@@ -21,7 +22,6 @@ For the hardware build (parts, wiring, power), see the [Physical Build Documenta
    - [4.3 Peers Explained](#43-peers-explained)
 5. [Verification Checklist](#5-verification-checklist)
 6. [Troubleshooting](#6-troubleshooting)
-7. [Open Items](#7-open-items)
 
 ---
 
@@ -30,10 +30,10 @@ For the hardware build (parts, wiring, power), see the [Physical Build Documenta
 | Device | Hostname | Role | Internet Connection | Tunnel IP |
 |:--|:--|:--|:--|:-:|
 | WireGuard VPS | `pivpn` | Hub. The only machine with a public IP; relays traffic between peers | Datacenter, public static IP | `10.0.0.1` |
-| Raspberry Pi 5 (car) | `cc` | Peer. Runs the hardware, video, and API containers | Solis Tag cellular hotspot (Wi-Fi) | `10.0.0.<car>` |
+| Raspberry Pi 5 (car) | `cc` | Peer. Runs the hardware, video, and API containers | Solis Tag cellular hotspot (Wi-Fi) | `10.0.0.51` |
 | Operator computer | — | Peer. Runs the controller relay and receives the video feed | Any internet (home, campus, phone) | `10.0.0.<operator>` |
 
-The tunnel subnet is **`10.0.0.0/24`** and WireGuard listens on **UDP 51820** on the VPS. `<car>` and `<operator>` stand for each device's assigned address (see [Open Items](#7-open-items)).
+The tunnel subnet is **`10.0.0.0/24`** and WireGuard listens on **UDP 51820** on the VPS. The car is `10.0.0.51`; each operator PC gets its own address when it is added with `pivpn add`.
 
 ---
 
@@ -67,7 +67,7 @@ The car runs **Raspberry Pi OS (64-bit)**, based on **Debian 13 "trixie"**. The 
 SSH in using the wireguard peer ip:
 
 ```bash
-ssh <user>@10.0.0.<car>
+ssh <user>@10.0.0.51
 ```
 
 Update everything and install the basics:
@@ -160,7 +160,7 @@ sudo chmod 600 /etc/wireguard/wg0.conf
 ```ini
 [Interface]
 PrivateKey = <car private key: never share>
-Address    = 10.0.0.<car>/24
+Address    = 10.0.0.51/24
 DNS        = <set by PiVPN>
 MTU        = 1280                    # add this: safe value for cellular + WireGuard overhead
 
@@ -189,6 +189,54 @@ sudo systemctl enable --now wg-quick@wg0
 sudo wg show          # "latest handshake" should be a few seconds ago
 ping -c 4 10.0.0.1    # VPS reachable over the tunnel
 ```
+
+### 2.5 Install Docker
+
+All of the car's services (master-api, video-api, controller-api, MediaMTX) run as Docker containers managed by Docker Compose. Deployment commands are in the [main README](../README.md#docker-deployment).
+
+**1. Install Docker Engine and the Compose plugin** using Docker's official install script:
+
+```bash
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+```
+
+This adds Docker's apt repository, so future updates come through `sudo apt upgrade` like everything else. It installs `docker-ce`, `containerd`, and the `docker compose` plugin.
+
+> Don't use Debian's `docker.io` package. It lags behind and doesn't include the `docker compose` v2 plugin the project uses.
+
+**2. Let your user run Docker without `sudo`:**
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+Log out and back in (or run `newgrp docker`) for the group change to apply.
+
+**3. Start Docker on boot:**
+
+```bash
+sudo systemctl enable --now docker containerd
+```
+
+With this enabled, the `restart: unless-stopped` policy in the Compose file brings all the car's services back up automatically after a reboot.
+
+**4. Verify:**
+
+```bash
+docker --version
+docker compose version
+docker run --rm hello-world     # pulls a test image and prints "Hello from Docker!"
+```
+
+**5. Hardware access from containers.** Containers can't see the Pi's hardware unless the Compose file passes it through:
+
+| Device | Used By | Compose Entry |
+|:--|:--|:--|
+| `/dev/i2c-1` | controller-api (PCA9685) | `devices: ["/dev/i2c-1:/dev/i2c-1"]` |
+| `/dev/video0` | video-api (Brio 101 webcam) | `devices: ["/dev/video0:/dev/video0"]` |
+
+If the webcam shows up as a different `/dev/video*` number, check with `v4l2-ctl --list-devices` and update the Compose file.
 
 ---
 
@@ -265,7 +313,7 @@ The solution is a small cloud server (VPS) with a **public, static IP**. Both th
 ```mermaid
 flowchart LR
     subgraph CAR["🚗 Car"]
-        PI["Raspberry Pi 5 (cc)<br/>wg0: 10.0.0.&lt;car&gt;"]
+        PI["Raspberry Pi 5 (cc)<br/>wg0: 10.0.0.51"]
         SOLIS["Solis Tag<br/>cellular hotspot"]
         PI -- Wi-Fi --> SOLIS
     end
@@ -339,7 +387,7 @@ In WireGuard every device is a **peer**, identified by its public key. CC uses a
 
 | Peer | Knows About | `Endpoint` | `AllowedIPs` | `PersistentKeepalive` |
 |:--|:--|:--|:--|:-:|
-| **VPS** (hub) | Every registered peer | *(none: learns them from handshakes)* | One `/32` per peer, e.g. `10.0.0.<car>/32` | — |
+| **VPS** (hub) | Every registered peer | *(none: learns them from handshakes)* | One `/32` per peer, e.g. `10.0.0.51/32` | — |
 | **Pi** (car) | VPS only | `<VPS IP>:51820` | `10.0.0.0/24` | `25` |
 | **Operator PC** | VPS only | `<VPS IP>:51820` | `10.0.0.0/24` | `25` |
 
@@ -371,13 +419,16 @@ Run on the **Pi**:
 | Tunnel up | `sudo wg show` | Recent handshake (< 2 min) |
 | VPS reachable | `ping -c 4 10.0.0.1` | Replies |
 | WireGuard on boot | `systemctl is-enabled wg-quick@wg0` | `enabled` |
+| Docker installed | `docker compose version` | Prints a v2 version |
+| Docker on boot | `systemctl is-enabled docker` | `enabled` |
+| No `sudo` needed | `docker ps` | Runs without a permission error |
 
 Run on the **operator PC**:
 
 | Check | Command | Expected |
 |:--|:--|:--|
-| Car reachable | `ping 10.0.0.<car>` | Replies (typically 50–150 ms over cellular) |
-| SSH over tunnel | `ssh <user>@10.0.0.<car>` | Logs in |
+| Car reachable | `ping 10.0.0.51` | Replies (typically 50–150 ms over cellular) |
+| SSH over tunnel | `ssh <user>@10.0.0.51` | Logs in |
 
 Run on the **VPS**:
 
@@ -400,4 +451,6 @@ Run on the **VPS**:
 | Handshake OK but SSH / video hangs | MTU too large for cellular | Set `MTU = 1280` (or lower) in `wg0.conf` |
 | Car reachable, then drops after ~1 min idle | No keepalive; cellular NAT mapping expired | Set `PersistentKeepalive = 25` on the Pi |
 | All Pi traffic is slow | PiVPN default full tunnel (`0.0.0.0/0`) | Change `AllowedIPs` to `10.0.0.0/24` |
+| `docker: permission denied` | User not in `docker` group | `sudo usermod -aG docker $USER`, then log out and back in |
+| controller-api can't find I2C | `/dev/i2c-1` not passed to the container | Add the `devices:` entry from [§2.5](#25-install-docker) |
 | High or spiky latency | Weak cellular signal | Move the Solis Tag to a better spot on the car; lower the video bitrate |
