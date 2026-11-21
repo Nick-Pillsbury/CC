@@ -1,0 +1,19 @@
+logLevel: warn
+
+rtsp: yes
+rtspAddress: 127.0.0.1:8554   # only ffmpeg on the car uses this
+rtspTransports: [tcp]
+
+webrtc: yes
+webrtcAddress: 10.0.0.51:8889
+webrtcLocalUDPAddress: 10.0.0.51:8189
+webrtcIPsFromInterfaces: no            # don't advertise cellular/LAN IPs
+webrtcAdditionalHosts: [10.0.0.51]      # the only address clients should try
+
+hls: no
+rtmp: no
+srt: no
+
+paths:
+  stream:
+    source: publisher

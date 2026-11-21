@@ -1,0 +1,44 @@
+name: cc-project
+
+services:
+  camera-mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx-container
+    network_mode: host
+    volumes:
+      - ./video-container/mediamtx.yml:/mediamtx.yml:ro
+    restart: unless-stopped
+
+  video-api:
+    build: ./video-container
+    image: video-api-image:latest
+    container_name: video-api-container
+    network_mode: host
+    devices:
+      - /dev/video0:/dev/video0
+    environment:
+      CAMERA_DEVICE: /dev/video0
+      VIDEO_SIZE: 1920x1080
+      FRAMERATE: "30"
+      BITRATE: 6M
+      BUFSIZE: 6M
+      RTSP_PORT: "8554"
+    depends_on:
+      - camera-mediamtx
+    restart: unless-stopped
+
+  controller-api:
+    build: ./controller-container
+    image: controller-api-image:latest
+    container_name: controller-api-container
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+
+  master-api:
+    build: ./master-container
+    image: master-api-image:latest
+    container_name: master-api-container
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
