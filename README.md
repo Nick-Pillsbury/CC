@@ -3,4 +3,5 @@ The goal of CC is to design and implement a cellular-enabled RC car, modified to
 
 ## Documentation
 - [Project Proposal](CC_Proposal.pdf)
-- [Physical Build Documentation](Physical_Build_Info/readme.md): parts list, wiring, power, assembly, bring-up, and safety
+- [Physical Build Documentation](Physical_Build_Info/readme.md): parts list, wiring, power, assembly, power-on order, and safety
+- [System Setup Documentation](System_Setup_Info/readme.md): Raspberry Pi OS, I2C, WireGuard, Solis Tag, and how the VPS connects everything
